@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Title Chain Canvas</title>
+<style>
+  :root{
+    --bg:#eef1f5; --panel:#ffffff; --ink:#1f2733; --muted:#6b7686;
+    --line:#d9dee6; --accent:#1f5fa8; --accent-d:#164a86;
+    --shadow:0 1px 3px rgba(20,30,50,.09),0 8px 24px rgba(20,30,50,.07);
+    --canvas-bg:#f3f5f9; --dot:#d3d9e3;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{font:13.5px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);overflow:hidden}
+  button{font:inherit;cursor:pointer}
+  input,select,textarea{font:inherit;color:inherit}
+
+  .app-grid{display:flex;flex-direction:column;height:100vh}
+
+  /* ---- Top bar ---- */
+  header.app{background:linear-gradient(180deg,#22344b,#1a2739);color:#eaf0f8;display:flex;align-items:center;gap:14px;padding:9px 16px;box-shadow:0 2px 10px rgba(0,0,0,.18);z-index:30}
+  header.app .brand{font-size:15px;font-weight:650;white-space:nowrap}
+  header.app .brand .mark{color:#7fb3ec}
+  .proj-name{background:rgba(255,255,255,.08);border:1px solid #3a4d68;color:#eaf0f8;border-radius:7px;padding:5px 10px;font-weight:600;min-width:180px}
+  .proj-name:focus{outline:none;border-color:#7fb3ec;background:rgba(255,255,255,.14)}
+  .spacer{flex:1}
+  .tbtns{display:flex;gap:7px;flex-wrap:wrap}
+  .btn{border:1px solid #3d5171;border-radius:8px;padding:6px 11px;font-size:12.5px;font-weight:550;background:#31445e;color:#dce6f4}
+  .btn:hover{background:#3b5273}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-d)}
+  .btn.ghost{background:transparent;border-color:#41567a;color:#c4d4ea}
+  .btn.ghost:hover{background:#2a3b53}
+
+  /* ---- Toolbar (parcels + tools) ---- */
+  .toolbar{display:flex;align-items:center;gap:10px;padding:6px 12px;background:#fff;border-bottom:1px solid var(--line);z-index:20}
+  .parcels{display:flex;gap:5px;align-items:center;overflow-x:auto;flex:1;min-width:0}
+  .ptab{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:#f6f8fb;border-radius:8px;padding:5px 9px;white-space:nowrap;color:#3a4658;font-weight:600;font-size:12.5px}
+  .ptab .swatch{width:9px;height:9px;border-radius:3px}
+  .ptab.active{background:#e8f0fb;border-color:#bcd6f4;color:var(--accent-d);box-shadow:inset 0 0 0 1px #cfe0f6}
+  .ptab .close{border:none;background:none;color:#9aa6b6;font-size:14px;line-height:1;padding:0 0 0 2px}
+  .ptab .close:hover{color:#b02a37}
+  .ptab.addp{background:#fff;color:var(--accent);font-weight:700}
+  .tools{display:flex;align-items:center;gap:7px}
+  .tool{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;font-weight:600;color:#3a4658;font-size:12.5px}
+  .tool:hover{background:#f2f5f9;border-color:#c6cfdb}
+  .tool.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .tool.primary:hover{background:var(--accent-d)}
+  .newkind{border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:#fff}
+  .zoom{display:flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:8px;padding:2px 4px}
+  .zoom button{border:none;background:none;font-size:15px;width:24px;color:#3a4658}
+  .zoom span{font-size:12px;color:var(--muted);min-width:38px;text-align:center}
+
+  /* ---- Stage ---- */
+  .stage{flex:1;display:flex;min-height:0}
+  .canvas{position:relative;flex:1;overflow:hidden;background:var(--canvas-bg);
+    background-image:radial-gradient(var(--dot) 1.3px,transparent 1.3px);
+    background-size:24px 24px;cursor:default;
+    touch-action:none;-ms-touch-action:none;-webkit-tap-highlight-color:transparent}
+  .canvas.panning{cursor:grabbing}
+  #world{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+  #arrows{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none;z-index:1}
+
+  .box{position:absolute;width:222px;background:#fff;border:1px solid var(--line);border-top:3px solid var(--accent);
+    border-radius:10px;box-shadow:var(--shadow);padding:9px 11px 11px;z-index:2;cursor:grab;user-select:none}
+  .box:active{cursor:grabbing}
+  .box.bgap{box-shadow:0 0 0 2px #e0616b,var(--shadow)}
+  .box.bover{box-shadow:0 0 0 2px #d99a2b,var(--shadow)}
+  .box.sel{box-shadow:0 0 0 2px var(--accent),var(--shadow)!important}
+  .box .kind{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:20px;margin-bottom:6px}
+  .box .ibadge{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;margin:0 0 6px 4px;background:#efeafe;color:#5b3ad6;vertical-align:top}
+  .box .schip{display:inline-flex;align-items:center;gap:4px;margin-top:9px;font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:20px}
+  .box .schip.ok{background:#e7f6ec;color:#1c7a43}
+  .box .schip.gap{background:#fdeced;color:#b02a37}
+  .box .schip.over{background:#fff4dd;color:#8a5a00}
+  .box .schip.origin{background:#eceafe;color:#5b3ad6}
+  .box .party{font-size:13.5px;font-weight:650;color:#1f2733;word-break:break-word;line-height:1.25}
+  .box .to{color:var(--muted);font-size:11px;text-align:center;margin:1px 0}
+  .box .grantee{font-weight:600;color:#33455f}
+  .box .ph{color:#aab3c0;font-weight:500;font-style:italic}
+  .box .meta{margin-top:7px;padding-top:7px;border-top:1px dashed #e6eaf0;display:flex;flex-direction:column;gap:2px;font-size:11.5px;color:#556}
+  .box .meta .row{display:flex;gap:6px}
+  .box .meta .lab{color:#93a0b2;min-width:34px;font-weight:600}
+  .box .handle{position:absolute;left:50%;bottom:-8px;transform:translateX(-50%);width:15px;height:15px;border-radius:50%;
+    background:#fff;border:2px solid var(--accent);cursor:crosshair;z-index:3;opacity:.35;transition:opacity .1s}
+  .box:hover .handle,.box.sel .handle{opacity:1}
+  .box .handle:hover{background:var(--accent);transform:translateX(-50%) scale(1.25)}
+  /* touch / stylus: bigger, always-visible handles and roomier tap targets */
+  @media (hover:none),(pointer:coarse){
+    .box .handle{opacity:1;width:22px;height:22px;bottom:-12px;border-width:3px}
+    .icon-btn,.tool,.zoom button{min-height:34px}
+    .ptab{padding:8px 11px}
+  }
+  /* narrower tablet widths: slimmer inspector */
+  @media (max-width:900px){
+    .inspector{width:264px}
+    header.app{gap:10px;flex-wrap:wrap}
+    .proj-name{min-width:130px}
+  }
+
+  .hint-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+  .hint-empty .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 26px;box-shadow:var(--shadow);text-align:center;color:var(--muted);max-width:340px}
+  .hint-empty .card b{color:var(--ink)}
+  .hint-empty .card button{pointer-events:auto;margin-top:12px}
+
+  /* ---- Inspector ---- */
+  .inspector{width:300px;background:#fff;border-left:1px solid var(--line);overflow-y:auto;flex-shrink:0}
+  .insp-h{padding:12px 15px;border-bottom:1px solid var(--line);font-weight:650;display:flex;align-items:center;justify-content:space-between}
+  .insp-b{padding:14px 15px;display:flex;flex-direction:column;gap:12px}
+  .fld label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:4px;font-weight:700}
+  .fld input,.fld select,.fld textarea{width:100%;border:1px solid var(--line);border-radius:7px;padding:7px 9px;background:#fff}
+  .fld input:focus,.fld select:focus,.fld textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(31,95,168,.12)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .kindgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .kindchip{border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12px;font-weight:600;text-align:left;background:#fff;display:flex;align-items:center;gap:7px}
+  .kindchip .sw{width:10px;height:10px;border-radius:3px}
+  .kindchip.on{box-shadow:inset 0 0 0 2px var(--accent);background:#f4f8fe}
+  .insp-tips{color:var(--muted);font-size:12.5px;line-height:1.6}
+  .insp-tips b{color:var(--ink)}
+  .insp-tips ul{margin:8px 0 0;padding-left:18px}
+  .insp-tips li{margin-bottom:5px}
+  /* interest controls + checks */
+  .chk{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;font-weight:500;color:var(--ink);text-transform:none;letter-spacing:0;margin-top:9px;cursor:pointer}
+  .chk input{width:15px;height:15px;margin-top:1px;flex-shrink:0}
+  .fracin{margin-top:8px}
+  .mut{color:var(--muted)}
+  .ownsec{border-top:1px solid var(--line);padding-top:12px}
+  .istat{font-size:12px;font-weight:600;padding:8px 10px;border-radius:8px;line-height:1.45;margin-top:10px}
+  .istat.ok{background:#e7f6ec;color:#1c7a43}
+  .istat.gap{background:#fdeced;color:#b02a37}
+  .istat.over{background:#fff4dd;color:#8a5a00}
+  .istat.origin{background:#eceafe;color:#5b3ad6}
+  .istat.none{background:#f1f3f7;color:#6b7686}
+  .icheck{border-radius:10px;padding:12px}
+  .icheck.ok{background:#e7f6ec;border:1px solid #a9dcbc}
+  .icheck.bad{background:#fdeced;border:1px solid #f2b8bd}
+  .icheck h4{margin:0;font-size:12.5px;font-weight:700}
+  .icheck.ok h4{color:#1c7a43}
+  .icheck.bad h4{color:#b02a37}
+  .iissue{display:block;width:100%;text-align:left;border:1px solid #f2b8bd;background:#fff;border-radius:7px;padding:7px 9px;margin-top:7px;font-size:12px;color:#7a2028;font-weight:600;cursor:pointer}
+  .iissue:hover{background:#fff5f6}
+  .iissue .who{color:#1f2733;font-weight:700}
+  .ipill{position:absolute;top:12px;left:12px;z-index:5;font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;box-shadow:var(--shadow);cursor:pointer;user-select:none;display:none}
+  .ipill.ok{background:#e7f6ec;color:#1c7a43;border:1px solid #a9dcbc}
+  .ipill.bad{background:#fdeced;color:#b02a37;border:1px solid #f2b8bd}
+  .del-row{margin-top:4px}
+  .del-btn{width:100%;border:1px solid #f0c4c9;background:#fdeced;color:#b02a37;border-radius:8px;padding:8px;font-weight:650}
+  .del-btn:hover{background:#fbdfe2}
+  .arrow-info{background:#f6f8fb;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12.5px}
+  .arrow-info .a{font-weight:650}
+  .flip{width:100%;border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px;font-weight:600}
+  .flip:hover{background:#f2f5f9}
+  .count-pill{font-size:11px;color:var(--muted);font-weight:600}
+
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#1f2733;color:#fff;padding:9px 16px;border-radius:8px;font-size:12.5px;box-shadow:var(--shadow);z-index:300;opacity:0;transition:opacity .2s;pointer-events:none}
+  .toast.show{opacity:1}
+  /* in-app modal panel (used when the sandboxed web version blocks downloads/print) */
+  .xoverlay{position:fixed;inset:0;background:rgba(18,26,40,.5);z-index:400;display:flex;align-items:center;justify-content:center;padding:20px}
+  .xpanel{background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:100%;max-width:560px;max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+  .xhead{padding:13px 16px;border-bottom:1px solid var(--line);font-weight:650;display:flex;align-items:center;justify-content:space-between}
+  .xclose{border:none;background:none;font-size:20px;color:var(--muted);line-height:1;cursor:pointer}
+  .xbody{padding:14px 16px;overflow:auto}
+  .xnote{margin:0 0 12px;font-size:13px;color:#43506a;line-height:1.55}
+  .xnote b{color:var(--ink)}
+  .xtext{width:100%;height:230px;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:12px/1.5 ui-monospace,Consolas,monospace;resize:vertical;background:#f8fafc;color:#1f2733}
+  .xfoot{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:9px;justify-content:flex-end}
+  .xbtn{border:1px solid var(--line);background:#fff;color:#33445c;border-radius:8px;padding:8px 14px;font-weight:600;cursor:pointer}
+  .xbtn:hover{background:#f2f5f9}
+  .xbtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .xbtn.primary:hover{background:var(--accent-d)}
+
+  /* ---- PDF / print view (built off-screen, revealed only when printing) ---- */
+  .print-root{position:fixed;left:-100000px;top:0;background:#fff;color:#111}
+  .print-page{width:720px;padding:0 0 18px}
+  .print-head{padding:2px 0 12px;border-bottom:2px solid #22344b;margin-bottom:16px}
+  .print-head .pt{font-size:18px;font-weight:700;color:#1a2739}
+  .print-head .ps{font-size:12px;color:#556;margin-top:3px}
+  .print-stage{position:relative;overflow:hidden}
+  .print-world{position:relative;transform-origin:0 0}
+  .print-world .box{cursor:default}
+
+  @media print{
+    @page{size:letter;margin:0.5in}
+    html,body{overflow:visible;background:#fff}
+    .app-grid{display:none!important}
+    .print-root{position:static;left:auto;top:auto}
+    .print-page{break-after:page;page-break-after:always}
+    .print-page:last-child{break-after:auto;page-break-after:auto}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .box{box-shadow:none!important}
+    .box .handle{display:none!important}
+  }
+</style>
+</head>
+<body>
+<div class="app-grid">
+  <header class="app">
+    <span class="brand"><span class="mark">§</span> Title Chain Canvas</span>
+    <input class="proj-name" id="projName" placeholder="Project name" oninput="setProj(this.value)">
+    <span class="spacer"></span>
+    <div class="tbtns">
+      <button class="btn ghost" onclick="loadSample()">Sample</button>
+      <button class="btn ghost" onclick="importJSON()">Import</button>
+      <button class="btn ghost" onclick="exportJSON()">Export</button>
+      <button class="btn" onclick="exportPDF()">PDF</button>
+      <button class="btn ghost" onclick="newProject()">New</button>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="parcels" id="parcels"></div>
+    <div class="tools">
+      <select class="newkind" id="newKind" title="Type of box to add">
+        <option value="deed">Deed</option>
+        <option value="mortgage">Mortgage</option>
+        <option value="release">Release</option>
+        <option value="lien">Lien / Judgment</option>
+        <option value="easement">Easement</option>
+        <option value="lease">Lease</option>
+        <option value="probate">Probate / Will</option>
+        <option value="affidavit">Affidavit</option>
+        <option value="patent">Patent / Origin</option>
+        <option value="misc">Misc</option>
+        <option value="note">Note</option>
+      </select>
+      <button class="tool primary" onclick="addBox()">+ Add box</button>
+      <button class="tool" onclick="fitAll()">Fit</button>
+      <div class="zoom">
+        <button onclick="zoomBy(1/1.2)">−</button>
+        <span id="zoomPct">100%</span>
+        <button onclick="zoomBy(1.2)">+</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="canvas" id="canvas">
+      <div class="ipill" id="ipill" onclick="focusFirstIssue()" title="Interest accounting for this parcel"></div>
+      <div id="world">
+        <svg id="arrows"></svg>
+      </div>
+      <div class="hint-empty" id="hintEmpty" style="display:none">
+        <div class="card">
+          <b>Empty parcel.</b><br>Add a box for the current deed, then drag from the little dot at its bottom to another box to draw a conveyance arrow.
+          <br><button class="tool primary" onclick="addBox()">+ Add first box</button>
+        </div>
+      </div>
+    </div>
+    <aside class="inspector">
+      <div class="insp-h"><span id="inspTitle">Details</span><span class="count-pill" id="inspCount"></span></div>
+      <div class="insp-b" id="inspBody"></div>
+    </aside>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ================= Config ================= */
+const STORE_KEY='titleCanvas.v2';
+const KINDS={
+  deed:{label:'Deed',c:'#1f5fa8',bg:'#e8f0fb',bd:'#cfe0f6'},
+  mortgage:{label:'Mortgage',c:'#8a5a00',bg:'#fff4dd',bd:'#f0dcae'},
+  release:{label:'Release',c:'#1c7a43',bg:'#e7f6ec',bd:'#a9dcbc'},
+  lien:{label:'Lien / Judgment',c:'#b02a37',bg:'#fdeced',bd:'#f2b8bd'},
+  easement:{label:'Easement',c:'#0f766e',bg:'#e0f2f0',bd:'#a7dad4'},
+  lease:{label:'Lease',c:'#b45309',bg:'#fdf0e1',bd:'#f2d6ac'},
+  probate:{label:'Probate / Will',c:'#6d28d9',bg:'#f1eafe',bd:'#ddccfb'},
+  affidavit:{label:'Affidavit',c:'#4d7c0f',bg:'#eef6e1',bd:'#cfe6a8'},
+  patent:{label:'Patent / Origin',c:'#3730a3',bg:'#e8e9fb',bd:'#c9cbf3'},
+  misc:{label:'Misc',c:'#64748b',bg:'#eef1f6',bd:'#d6dde7'},
+  note:{label:'Note',c:'#556070',bg:'#f1f3f7',bd:'#dde3ec'}
+};
+const PARCEL_COLORS=['#1f5fa8','#0f766e','#8a5a00','#6d28d9','#b02a37','#0e7490','#9333ea','#15803d'];
+
+/* ================= State ================= */
+let state=blankState();
+let activeId=null;
+let selType=null, selId=null;
+let drag=null;
+let zTop=10;
+
+function blankState(){
+  const p=newParcel('Parcel 1');
+  const s={project:'Untitled Search', parcels:[p]};
+  return s;
+}
+function newParcel(name){
+  return {id:uid(),name:name||'Parcel',color:PARCEL_COLORS[0],
+    boxes:[],arrows:[],view:{panX:80,panY:80,zoom:1}};
+}
+function uid(){return 'x'+Math.random().toString(36).slice(2,9)}
+function activeParcel(){return state.parcels.find(p=>p.id===activeId)||state.parcels[0]}
+function view(){return activeParcel().view}
+function boxById(id){return activeParcel().boxes.find(b=>b.id===id)}
+function boxEl(id){return document.querySelector('.box[data-id="'+id+'"]')}
+
+/* ================= Interest accounting ================= */
+const OWNERSHIP=new Set(['deed','probate','patent']); // kinds that carry fee interest
+function gcd(a,b){a=Math.abs(a);b=Math.abs(b);while(b){[a,b]=[b,a%b];}return a||1}
+function reduce(n,d){if(d<0){n=-n;d=-d}const g=gcd(n,d);return{n:n/g,d:d/g}}
+function parseFrac(s){
+  if(s==null)return{n:1,d:1};s=(''+s).trim();if(!s)return{n:1,d:1};
+  if(s.includes('/')){const[a,b]=s.split('/');const n=parseFloat(a),d=parseFloat(b);
+    if(!isFinite(n)||!isFinite(d)||!d)return{n:0,d:1};return reduce(n,d);}
+  const v=parseFloat(s);if(!isFinite(v))return{n:0,d:1};
+  if(Number.isInteger(v))return{n:v,d:1};return reduce(Math.round(v*10000),10000);
+}
+function addFrac(a,b){return reduce(a.n*b.d+b.n*a.d,a.d*b.d)}
+function subFrac(a,b){return reduce(a.n*b.d-b.n*a.d,a.d*b.d)}
+function eqFrac(a,b){return a.n*b.d===b.n*a.d}
+function ltFrac(a,b){return a.n*b.d<b.n*a.d}
+function fracStr(f){return f.d===1?''+f.n:f.n+'/'+f.d}
+const WHOLE={n:1,d:1};
+function isOrigin(b){return !!b.origin||b.kind==='patent'}
+function interestOf(b){return parseFrac(b&&b.partial?(b.interest||'1/1'):'1/1')}
+// Status of a single ownership box: is the interest it conveys backed by incoming prior deeds?
+function interestStatus(b,parcel){
+  parcel=parcel||activeParcel();
+  if(!OWNERSHIP.has(b.kind))return null;
+  const connected=parcel.arrows.some(a=>a.from===b.id||a.to===b.id);
+  if(!b.grantor&&!b.grantee&&!connected)return null; // ignore blank scratch boxes
+  if(isOrigin(b))return{state:'origin'};
+  const req=interestOf(b);
+  const sources=parcel.arrows.filter(a=>a.to===b.id)
+    .map(a=>parcel.boxes.find(x=>x.id===a.from))
+    .filter(x=>x&&OWNERSHIP.has(x.kind));
+  if(!sources.length)return{state:'unsourced',req};
+  let sum={n:0,d:1};sources.forEach(s=>sum=addFrac(sum,interestOf(s)));
+  if(eqFrac(sum,req))return{state:'ok',req,sourced:sum};
+  if(ltFrac(sum,req))return{state:'missing',req,sourced:sum,gap:subFrac(req,sum)};
+  return{state:'over',req,sourced:sum,gap:subFrac(sum,req)};
+}
+function parcelIssues(parcel){
+  parcel=parcel||activeParcel();const out=[];
+  parcel.boxes.forEach(b=>{const s=interestStatus(b,parcel);
+    if(s&&(s.state==='missing'||s.state==='over'||s.state==='unsourced'))out.push({b,s});});
+  return out;
+}
+function statClass(st){if(!st)return'none';return st.state==='ok'?'ok':st.state==='origin'?'origin':st.state==='over'?'over':'gap'}
+function statLine(st){
+  if(!st)return'No interest tracking for this instrument type.';
+  switch(st.state){
+    case'origin':return'◆ Origin of title — the chain terminates here, no prior deed required.';
+    case'ok':return'✓ Interest fully accounted'+(st.req&&!eqFrac(st.req,WHOLE)?' ('+fracStr(st.req)+' conveyed, all sourced).':' — full title sourced by prior deeds.');
+    case'missing':return'⚠ Missing '+fracStr(st.gap)+'. Prior deeds convey '+fracStr(st.sourced)+' of the '+fracStr(st.req)+' needed.';
+    case'unsourced':return'⚠ No prior deed found. Draw an arrow from the conveyance that vested title in this grantor, or mark this box as origin/patent.';
+    case'over':return'⚠ Over-conveyed by '+fracStr(st.gap)+'. Prior deeds total '+fracStr(st.sourced)+' but only '+fracStr(st.req)+' is needed.';
+  }
+}
+function statChip(st){
+  if(!st)return'';
+  const map={origin:['origin','◆ Origin of title'],ok:['ok','✓ Interest sourced'],
+    missing:['gap','⚠ Missing '+ (st.gap?fracStr(st.gap):'')],
+    unsourced:['gap','⚠ No prior deed'],over:['over','⚠ Over '+(st.gap?fracStr(st.gap):'')]};
+  const m=map[st.state];return m?`<span class="schip ${m[0]}">${m[1]}</span>`:'';
+}
+function updatePill(){
+  const pill=document.getElementById('ipill');if(!pill)return;
+  const owns=activeParcel().boxes.some(b=>interestStatus(b));
+  if(!owns){pill.style.display='none';return;}
+  const issues=parcelIssues();
+  pill.style.display='inline-block';
+  if(issues.length){pill.className='ipill bad';pill.textContent=`⚠ ${issues.length} interest gap${issues.length!==1?'s':''}`;}
+  else{pill.className='ipill ok';pill.textContent='✓ Interest balanced';}
+}
+function focusFirstIssue(){const is=parcelIssues();if(is.length){select('box',is[0].b.id);centerOnBox(is[0].b.id);}}
+function centerOnBox(id){
+  const b=boxById(id);const el=boxEl(id);if(!b)return;const v=view();const r=canvas.getBoundingClientRect();
+  const w=el?el.offsetWidth:222,h=el?el.offsetHeight:110;
+  v.panX=r.width/2-(b.x+w/2)*v.zoom;v.panY=r.height/2-(b.y+h/2)*v.zoom;applyView();save();
+}
+
+/* ================= Persistence ================= */
+function save(){try{localStorage.setItem(STORE_KEY,JSON.stringify({state,activeId}))}catch(e){}}
+function load(){
+  try{const raw=localStorage.getItem(STORE_KEY);if(!raw)return false;
+    const o=JSON.parse(raw);if(o.state&&o.state.parcels){state=o.state;activeId=o.activeId||state.parcels[0].id;return true;}
+  }catch(e){}
+  return false;
+}
+
+/* ================= Coord helpers ================= */
+const canvas=document.getElementById('canvas');
+const world=document.getElementById('world');
+const svg=document.getElementById('arrows');
+function worldFromEvent(e){
+  const r=canvas.getBoundingClientRect(),v=view();
+  return {x:(e.clientX-r.left-v.panX)/v.zoom, y:(e.clientY-r.top-v.panY)/v.zoom};
+}
+function applyView(){
+  const v=view();
+  world.style.transform=`translate(${v.panX}px,${v.panY}px) scale(${v.zoom})`;
+  canvas.style.backgroundSize=`${24*v.zoom}px ${24*v.zoom}px`;
+  canvas.style.backgroundPosition=`${v.panX}px ${v.panY}px`;
+  document.getElementById('zoomPct').textContent=Math.round(v.zoom*100)+'%';
+}
+
+/* ================= Render ================= */
+function render(){
+  renderParcels();
+  renderBoxes();
+  drawArrows();
+  applyView();
+  renderInspector();
+  updatePill();
+  document.getElementById('projName').value=state.project;
+  document.getElementById('hintEmpty').style.display=activeParcel().boxes.length?'none':'flex';
+  save();
+}
+function renderParcels(){
+  const el=document.getElementById('parcels');
+  el.innerHTML=state.parcels.map(p=>{
+    const on=p.id===activeId?'active':'';
+    return `<div class="ptab ${on}" onclick="selectParcel('${p.id}')" ondblclick="renameParcel('${p.id}')" title="Double-click to rename">
+      <span class="swatch" style="background:${p.color}"></span>${esc(p.name)}
+      ${state.parcels.length>1?`<button class="close" onclick="event.stopPropagation();deleteParcel('${p.id}')">×</button>`:''}
+    </div>`;
+  }).join('')+`<button class="ptab addp" onclick="addParcel()">+ Parcel</button>`;
+}
+function renderBoxes(){
+  [...world.querySelectorAll('.box')].forEach(n=>n.remove());
+  activeParcel().boxes.forEach(b=>{
+    const el=document.createElement('div');
+    el.className='box'+(selType==='box'&&selId===b.id?' sel':'');
+    el.dataset.id=b.id;
+    el.style.left=b.x+'px';el.style.top=b.y+'px';
+    styleBox(el,b);
+    el.innerHTML=boxInner(b);
+    world.appendChild(el);
+  });
+}
+function styleBox(el,b,parcel){
+  const k=KINDS[b.kind]||KINDS.deed;
+  el.style.borderTopColor=k.c;
+  const st=interestStatus(b,parcel);
+  el.classList.remove('bgap','bover');
+  if(st&&(st.state==='missing'||st.state==='unsourced'))el.classList.add('bgap');
+  else if(st&&st.state==='over')el.classList.add('bover');
+}
+function boxInner(b,parcel){
+  const k=KINDS[b.kind]||KINDS.deed;
+  const grantor=b.grantor?esc(b.grantor):'<span class="ph">Grantor…</span>';
+  const grantee=b.grantee?esc(b.grantee):'<span class="ph">Grantee…</span>';
+  const rows=[];
+  if(b.idate) rows.push(row('Inst',b.idate));
+  if(b.rdate) rows.push(row('Rec',b.rdate));
+  if(b.docnum) rows.push(row('Doc#',b.docnum));
+  if(b.bookpage) rows.push(row('Bk/Pg',b.bookpage));
+  if(b.notes) rows.push(row('Note',b.notes));
+  const meta=rows.length?`<div class="meta">${rows.join('')}</div>`:'';
+  const partyBlock = b.kind==='note'
+    ? `<div class="party">${b.notes?esc(b.notes):'<span class="ph">Note…</span>'}</div>`
+    : `<div class="party">${grantor}</div><div class="to">▼ conveys to</div><div class="party grantee">${grantee}</div>`;
+  const metaOut = b.kind==='note'?'':meta;
+  const intBadge=(b.partial&&OWNERSHIP.has(b.kind))?`<span class="ibadge">${esc(fracStr(interestOf(b)))} interest</span>`:'';
+  const chip=statChip(interestStatus(b,parcel));
+  return `<span class="kind" style="background:${k.bg};color:${k.c}">${k.label}</span>${intBadge}
+    ${partyBlock}${metaOut}${chip}
+    <div class="handle" title="Drag to the deed this one conveys into"></div>`;
+}
+function row(lab,val){return `<div class="row"><span class="lab">${lab}</span><span>${esc(val)}</span></div>`}
+function refreshBox(id){
+  const el=boxEl(id),b=boxById(id);if(!el||!b)return;
+  el.innerHTML=boxInner(b);styleBox(el,b);
+}
+function positionBox(el,b){el.style.left=b.x+'px';el.style.top=b.y+'px'}
+
+/* ================= Arrows ================= */
+function rectOf(id){
+  const el=boxEl(id),b=boxById(id);if(!el||!b)return null;
+  return {x:b.x,y:b.y,w:el.offsetWidth,h:el.offsetHeight};
+}
+function edgePoint(r,to){
+  const cx=r.x+r.w/2,cy=r.y+r.h/2;let dx=to.x-cx,dy=to.y-cy;
+  if(!dx&&!dy)return{x:cx,y:cy};
+  const sx=dx?(r.w/2)/Math.abs(dx):1e9, sy=dy?(r.h/2)/Math.abs(dy):1e9;
+  const s=Math.min(sx,sy);return{x:cx+dx*s,y:cy+dy*s};
+}
+function drawArrows(){
+  const p=activeParcel();
+  const parts=[`<defs>
+    <marker id="ah" markerWidth="12" markerHeight="12" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 Z" fill="#4a5a72"/></marker>
+    <marker id="ahs" markerWidth="12" markerHeight="12" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 Z" fill="#1f5fa8"/></marker>
+  </defs>`];
+  p.arrows.forEach(a=>{
+    const A=rectOf(a.from),B=rectOf(a.to);if(!A||!B)return;
+    const cA={x:A.x+A.w/2,y:A.y+A.h/2},cB={x:B.x+B.w/2,y:B.y+B.h/2};
+    const s=edgePoint(A,cB),t=edgePoint(B,cA);
+    const sel=selType==='arrow'&&selId===a.id;
+    parts.push(`<path data-arrow="${a.id}" d="M${s.x},${s.y} L${t.x},${t.y}" stroke="transparent" stroke-width="16" fill="none" pointer-events="stroke" style="cursor:pointer"/>`);
+    parts.push(`<path d="M${s.x},${s.y} L${t.x},${t.y}" stroke="${sel?'#1f5fa8':'#4a5a72'}" stroke-width="${sel?2.6:1.8}" fill="none" marker-end="url(#${sel?'ahs':'ah'})" pointer-events="none"/>`);
+  });
+  if(drag&&drag.mode==='arrow'&&drag.tempWorld){
+    const A=rectOf(drag.fromId);
+    if(A){const s=edgePoint(A,drag.tempWorld);
+      parts.push(`<path d="M${s.x},${s.y} L${drag.tempWorld.x},${drag.tempWorld.y}" stroke="#1f5fa8" stroke-width="1.9" stroke-dasharray="6 4" fill="none" marker-end="url(#ahs)" pointer-events="none"/>`);}
+  }
+  svg.innerHTML=parts.join('');
+}
+
+/* ================= Selection & inspector ================= */
+function select(type,id){selType=type;selId=id;renderBoxes();drawArrows();renderInspector()}
+function clearSelection(){if(selType){selType=null;selId=null;renderBoxes();drawArrows();renderInspector()}}
+function renderInspector(){
+  const title=document.getElementById('inspTitle');
+  const cnt=document.getElementById('inspCount');
+  const body=document.getElementById('inspBody');
+  const p=activeParcel();
+  cnt.textContent=`${p.boxes.length} box · ${p.arrows.length} link`;
+  if(selType==='box'){
+    const b=boxById(selId);if(!b){clearSelection();return;}
+    title.textContent='Edit box';
+    body.innerHTML=`
+      <div class="fld"><label>Type</label>
+        <div class="kindgrid">${Object.keys(KINDS).map(k=>`
+          <button class="kindchip ${b.kind===k?'on':''}" onclick="setKind('${k}')"><span class="sw" style="background:${KINDS[k].c}"></span>${KINDS[k].label}</button>`).join('')}</div>
+      </div>
+      ${b.kind==='note'?'':`
+      <div class="fld"><label>Grantor</label><input id="f_grantor" value="${esc(b.grantor)}" oninput="upd('grantor',this.value)" placeholder="Conveying party"></div>
+      <div class="fld"><label>Grantee</label><input id="f_grantee" value="${esc(b.grantee)}" oninput="upd('grantee',this.value)" placeholder="Receiving party"></div>
+      <div class="two">
+        <div class="fld"><label>Instrument date</label><input value="${esc(b.idate)}" oninput="upd('idate',this.value)" placeholder="MM/DD/YYYY"></div>
+        <div class="fld"><label>Recorded date</label><input value="${esc(b.rdate)}" oninput="upd('rdate',this.value)" placeholder="MM/DD/YYYY"></div>
+      </div>
+      <div class="two">
+        <div class="fld"><label>Doc / Inst #</label><input value="${esc(b.docnum)}" oninput="upd('docnum',this.value)" placeholder="2019-003626"></div>
+        <div class="fld"><label>Book / Page</label><input value="${esc(b.bookpage)}" oninput="upd('bookpage',this.value)" placeholder="412 / 88"></div>
+      </div>`}
+      ${OWNERSHIP.has(b.kind)?`
+      <div class="fld ownsec">
+        <label>Interest conveyed</label>
+        <label class="chk"><input type="checkbox" ${b.partial?'checked':''} onchange="togglePartial(this.checked)"> Partial interest — this deed conveys only a fraction</label>
+        ${b.partial?`<input class="fracin" value="${esc(b.interest||'1/1')}" oninput="updFrac(this.value)" placeholder="e.g. 2/9, 1/2, 7/9">`:''}
+        <label class="chk"><input type="checkbox" ${(b.origin||b.kind==='patent')?'checked':''} ${b.kind==='patent'?'disabled':''} onchange="updInterest('origin',this.checked)"> Chain starts here — origin / patent (no prior deed needed)${b.kind==='patent'?' <span class="mut">— patent is always origin</span>':''}</label>
+        <div class="istat ${statClass(interestStatus(b))}" id="istatLine">${statLine(interestStatus(b))}</div>
+      </div>`:''}
+      <div class="fld"><label>Notes</label><textarea rows="2" oninput="upd('notes',this.value)">${esc(b.notes)}</textarea></div>
+      <div class="del-row"><button class="del-btn" onclick="deleteBox('${b.id}')">Delete box</button></div>`;
+  }else if(selType==='arrow'){
+    const a=p.arrows.find(x=>x.id===selId);if(!a){clearSelection();return;}
+    const fb=p.boxes.find(x=>x.id===a.from),tb=p.boxes.find(x=>x.id===a.to);
+    const nm=b=>b?(b.grantor||b.grantee||KINDS[b.kind].label):'—';
+    title.textContent='Conveyance link';
+    body.innerHTML=`
+      <div class="arrow-info"><span class="a">${esc(nm(fb))}</span><br><span style="color:#4a5a72">↓ points to ↓</span><br><span class="a">${esc(nm(tb))}</span></div>
+      <button class="flip" onclick="flipArrow('${a.id}')">⇄ Reverse direction</button>
+      <div class="del-row"><button class="del-btn" onclick="deleteArrow('${a.id}')">Delete link</button></div>`;
+  }else{
+    title.textContent='Parcel';
+    body.innerHTML=`
+      ${interestCheckHTML(p)}
+      <div class="fld"><label>Parcel name</label><input value="${esc(p.name)}" oninput="updParcel('name',this.value)"></div>
+      <div class="fld"><label>Parcel color</label>
+        <div class="kindgrid">${PARCEL_COLORS.map(c=>`<button class="kindchip ${p.color===c?'on':''}" onclick="updParcel('color','${c}')"><span class="sw" style="background:${c}"></span>${c}</button>`).join('')}</div>
+      </div>
+      <div class="insp-tips">
+        <b>How to use</b>
+        <ul>
+          <li>Pick a box type, click <b>+ Add box</b>.</li>
+          <li>Click a box to edit its fields here.</li>
+          <li>Draw a conveyance arrow by dragging the <b>dot</b> at a box's bottom to the deed it conveys <i>into</i> (prior deed → later deed).</li>
+          <li>On a deed, tick <b>Partial interest</b> to convey a fraction; the app checks each deed's incoming arrows add up.</li>
+          <li>Mark the oldest deed <b>origin / patent</b> so it isn't flagged as unsourced.</li>
+          <li>Drag empty space to pan · scroll to zoom · <b>Delete</b> removes a selected box/arrow.</li>
+        </ul>
+      </div>`;
+  }
+}
+function upd(field,val){const b=boxById(selId);if(!b)return;b[field]=val;renderBoxes();drawArrows();refreshStatLine();updatePill();save()}
+function setKind(k){const b=boxById(selId);if(!b)return;b.kind=k;renderBoxes();drawArrows();renderInspector();updatePill();save()}
+function updParcel(field,val){activeParcel()[field]=val;renderParcels();renderInspector();save()}
+// interest-specific updates
+function togglePartial(c){const b=boxById(selId);if(!b)return;b.partial=c;if(c&&(!b.interest||b.interest==='1/1'))b.interest='1/2';renderBoxes();renderInspector();updatePill();save()}
+function updFrac(val){const b=boxById(selId);if(!b)return;b.interest=val;renderBoxes();refreshStatLine();updatePill();save()}
+function updInterest(field,val){const b=boxById(selId);if(!b)return;b[field]=val;renderBoxes();renderInspector();updatePill();save()}
+function refreshStatLine(){const el=document.getElementById('istatLine');if(!el)return;const b=boxById(selId);if(!b)return;const st=interestStatus(b);el.className='istat '+statClass(st);el.innerHTML=statLine(st);}
+function interestCheckHTML(p){
+  const owns=p.boxes.some(b=>interestStatus(b,p));
+  if(!owns)return'';
+  const issues=parcelIssues(p);
+  if(!issues.length)return`<div class="icheck ok"><h4>✓ Interest balanced</h4></div>`;
+  const nm=b=>b.grantor||b.grantee||KINDS[b.kind].label;
+  const rows=issues.map(({b,s})=>{
+    const msg=s.state==='missing'?('missing '+fracStr(s.gap)):s.state==='over'?('over-conveyed '+fracStr(s.gap)):'no prior deed found';
+    return `<button class="iissue" onclick="select('box','${b.id}');centerOnBox('${b.id}')"><span class="who">${esc(nm(b))}</span> — ${msg}</button>`;
+  }).join('');
+  return`<div class="icheck bad"><h4>⚠ ${issues.length} interest gap${issues.length!==1?'s':''}</h4>${rows}</div>`;
+}
+
+/* ================= Mutations ================= */
+function addBox(){
+  const r=canvas.getBoundingClientRect(),v=view();
+  const cx=(r.width/2-v.panX)/v.zoom,cy=(r.height/2-v.panY)/v.zoom;
+  const jitter=()=>Math.round((Math.random()-.5)*40);
+  const b={id:uid(),kind:document.getElementById('newKind').value,
+    x:Math.round(cx-111)+jitter(),y:Math.round(cy-45)+jitter(),
+    grantor:'',grantee:'',idate:'',rdate:'',docnum:'',bookpage:'',notes:'',partial:false,interest:'1/1',origin:false};
+  activeParcel().boxes.push(b);
+  render();select('box',b.id);
+  document.getElementById('hintEmpty').style.display='none';
+  setTimeout(()=>{const f=document.getElementById('f_grantor');if(f)f.focus()},30);
+}
+function deleteBox(id){
+  const p=activeParcel();
+  p.boxes=p.boxes.filter(b=>b.id!==id);
+  p.arrows=p.arrows.filter(a=>a.from!==id&&a.to!==id);
+  selType=null;selId=null;render();toast('Box deleted');
+}
+function addArrow(from,to){
+  const p=activeParcel();
+  if(p.arrows.some(a=>a.from===from&&a.to===to)){toast('Link already exists');return;}
+  const a={id:uid(),from,to};p.arrows.push(a);renderBoxes();drawArrows();updatePill();save();
+}
+function deleteArrow(id){const p=activeParcel();p.arrows=p.arrows.filter(a=>a.id!==id);selType=null;selId=null;renderBoxes();drawArrows();renderInspector();updatePill();save();toast('Link deleted')}
+function flipArrow(id){const a=activeParcel().arrows.find(x=>x.id===id);if(!a)return;[a.from,a.to]=[a.to,a.from];renderBoxes();drawArrows();renderInspector();updatePill();save()}
+
+/* ================= Parcels ================= */
+function selectParcel(id){activeId=id;selType=null;selId=null;render()}
+function addParcel(){
+  const p=newParcel('Parcel '+(state.parcels.length+1));
+  p.color=PARCEL_COLORS[state.parcels.length%PARCEL_COLORS.length];
+  state.parcels.push(p);activeId=p.id;selType=null;selId=null;render();
+}
+function renameParcel(id){
+  const p=state.parcels.find(x=>x.id===id);if(!p)return;
+  const n=prompt('Parcel name:',p.name);if(n!=null){p.name=n.trim()||p.name;render()}
+}
+function deleteParcel(id){
+  if(state.parcels.length<=1)return;
+  const p=state.parcels.find(x=>x.id===id);
+  if(!confirm(`Delete "${p.name}" and everything on it?`))return;
+  state.parcels=state.parcels.filter(x=>x.id!==id);
+  if(activeId===id)activeId=state.parcels[0].id;
+  selType=null;selId=null;render();
+}
+function setProj(v){state.project=v;clearTimeout(setProj._t);setProj._t=setTimeout(save,300)}
+
+/* ================= View: zoom / fit ================= */
+function zoomBy(f){
+  const v=view(),r=canvas.getBoundingClientRect();
+  const mx=r.width/2,my=r.height/2;
+  const wx=(mx-v.panX)/v.zoom,wy=(my-v.panY)/v.zoom;
+  v.zoom=Math.min(3,Math.max(.2,v.zoom*f));
+  v.panX=mx-wx*v.zoom;v.panY=my-wy*v.zoom;applyView();save();
+}
+function fitAll(){
+  const p=activeParcel();if(!p.boxes.length)return;
+  let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  p.boxes.forEach(b=>{const el=boxEl(b.id);const w=el?el.offsetWidth:222,h=el?el.offsetHeight:110;
+    minX=Math.min(minX,b.x);minY=Math.min(minY,b.y);maxX=Math.max(maxX,b.x+w);maxY=Math.max(maxY,b.y+h);});
+  const pad=60,r=canvas.getBoundingClientRect();
+  const bw=maxX-minX+pad*2,bh=maxY-minY+pad*2;
+  const v=view();
+  v.zoom=Math.min(1.1,Math.min(r.width/bw,r.height/bh));
+  v.panX=(r.width-(maxX+minX)*v.zoom)/2;
+  v.panY=(r.height-(maxY+minY)*v.zoom)/2;
+  applyView();save();
+}
+
+/* ================= Pointer interaction (mouse + touch + stylus) ================= */
+const pointers=new Map();   // active pointers: id -> {x,y}
+let pinch=null;             // two-finger zoom/pan session
+canvas.addEventListener('pointerdown',e=>{
+  if(e.pointerType==='mouse'&&e.button!==0)return;
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  try{canvas.setPointerCapture(e.pointerId)}catch(_){}
+  if(pointers.size===2){          // second finger down → pinch/pan, abandon any single drag
+    if(drag&&drag.mode==='arrow'){drag=null;drawArrows()}
+    drag=null;document.body.style.userSelect='';canvas.classList.remove('panning');
+    startPinch();return;
+  }
+  if(pointers.size>2)return;
+  const handle=e.target.closest('.handle');
+  const bx=e.target.closest('.box');
+  const arrow=e.target.closest('[data-arrow]');
+  if(handle&&bx){startArrow(bx.dataset.id,e);return;}
+  if(bx){startBoxDrag(bx,e);return;}
+  if(arrow){select('arrow',arrow.dataset.arrow);e.preventDefault();return;}
+  clearSelection();startPan(e);
+});
+function startBoxDrag(el,e){
+  const id=el.dataset.id;select('box',id);
+  el.style.zIndex=++zTop;
+  const w=worldFromEvent(e),b=boxById(id);
+  drag={mode:'box',id,dx:w.x-b.x,dy:w.y-b.y,moved:false};
+  document.body.style.userSelect='none';e.preventDefault();
+}
+function startArrow(id,e){
+  drag={mode:'arrow',fromId:id,tempWorld:worldFromEvent(e)};
+  document.body.style.userSelect='none';e.preventDefault();e.stopPropagation();
+}
+function startPan(e){
+  const v=view();
+  drag={mode:'pan',sx:e.clientX,sy:e.clientY,px:v.panX,py:v.panY};
+  canvas.classList.add('panning');
+}
+function startPinch(){
+  const pts=[...pointers.values()];const v=view();
+  const dist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+  pinch={dist:dist||1,mid:{x:(pts[0].x+pts[1].x)/2,y:(pts[0].y+pts[1].y)/2},panX:v.panX,panY:v.panY,zoom:v.zoom};
+}
+function updatePinch(){
+  const pts=[...pointers.values()];if(pts.length<2)return;
+  const dist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+  const mid={x:(pts[0].x+pts[1].x)/2,y:(pts[0].y+pts[1].y)/2};
+  const r=canvas.getBoundingClientRect(),v=view();
+  const nz=Math.min(3,Math.max(.2,pinch.zoom*(dist/pinch.dist)));
+  // world point under the pinch's starting midpoint (using the view at pinch start)
+  const wx=((pinch.mid.x-r.left)-pinch.panX)/pinch.zoom, wy=((pinch.mid.y-r.top)-pinch.panY)/pinch.zoom;
+  v.zoom=nz;
+  v.panX=(mid.x-r.left)-wx*nz;   // follow the moving midpoint → two-finger pan
+  v.panY=(mid.y-r.top)-wy*nz;
+  applyView();clearTimeout(canvas._z);canvas._z=setTimeout(save,250);
+}
+window.addEventListener('pointermove',e=>{
+  if(pointers.has(e.pointerId))pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pinch){updatePinch();return;}
+  if(!drag)return;
+  if(drag.mode==='box'){
+    const w=worldFromEvent(e),b=boxById(drag.id);
+    b.x=Math.round(w.x-drag.dx);b.y=Math.round(w.y-drag.dy);drag.moved=true;
+    positionBox(boxEl(drag.id),b);drawArrows();
+  }else if(drag.mode==='arrow'){
+    drag.tempWorld=worldFromEvent(e);drawArrows();
+  }else if(drag.mode==='pan'){
+    const v=view();v.panX=drag.px+(e.clientX-drag.sx);v.panY=drag.py+(e.clientY-drag.sy);applyView();
+  }
+});
+function endPointer(e){
+  pointers.delete(e.pointerId);
+  try{canvas.releasePointerCapture(e.pointerId)}catch(_){}
+  if(pinch&&pointers.size<2){pinch=null;if(pointers.size===1)return;} // wait until all lifted
+  if(pointers.size>0)return;
+  if(!drag){canvas.classList.remove('panning');document.body.style.userSelect='';return;}
+  if(drag.mode==='box'){if(drag.moved)save();}
+  else if(drag.mode==='arrow'){
+    const el=document.elementFromPoint(e.clientX,e.clientY);
+    const tgt=el&&el.closest('.box');
+    if(tgt&&tgt.dataset.id!==drag.fromId)addArrow(drag.fromId,tgt.dataset.id);
+    drag=null;drawArrows();document.body.style.userSelect='';canvas.classList.remove('panning');return;
+  }else if(drag.mode==='pan'){canvas.classList.remove('panning');save();}
+  drag=null;document.body.style.userSelect='';
+}
+window.addEventListener('pointerup',endPointer);
+window.addEventListener('pointercancel',e=>{
+  pointers.delete(e.pointerId);pinch=null;
+  if(drag&&drag.mode==='arrow'){drag=null;drawArrows()}else{drag=null}
+  document.body.style.userSelect='';canvas.classList.remove('panning');
+});
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const v=view(),r=canvas.getBoundingClientRect();
+  const mx=e.clientX-r.left,my=e.clientY-r.top;
+  const wx=(mx-v.panX)/v.zoom,wy=(my-v.panY)/v.zoom;
+  const f=e.deltaY<0?1.12:1/1.12;
+  v.zoom=Math.min(3,Math.max(.2,v.zoom*f));
+  v.panX=mx-wx*v.zoom;v.panY=my-wy*v.zoom;applyView();
+  clearTimeout(canvas._z);canvas._z=setTimeout(save,250);
+},{passive:false});
+document.addEventListener('keydown',e=>{
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))return;
+  if((e.key==='Delete'||e.key==='Backspace')&&selType){
+    e.preventDefault();
+    if(selType==='box')deleteBox(selId);else if(selType==='arrow')deleteArrow(selId);
+  }
+  if(e.key==='Escape'){if(drag&&drag.mode==='arrow'){drag=null;drawArrows()}clearSelection()}
+});
+
+/* ================= File ops ================= */
+function exportJSON(){
+  const data=JSON.stringify(state,null,2);
+  const fname=(state.project||'title-chain').replace(/[^a-z0-9\-_]+/gi,'_')+'.json';
+  const blob=new Blob([data],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=fname;a.rel='noopener';a.style.display='none';
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{try{document.body.removeChild(a)}catch(_){}URL.revokeObjectURL(url);},1000);
+  // In the shared web version the app runs in a sandboxed frame where the download is blocked —
+  // show the data in a copyable in-app panel instead.
+  if(isFramed()){showExportPanel(fname,data);}
+  else{toast('Exported');}
+}
+function importJSON(){
+  const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';
+  inp.onchange=()=>{const f=inp.files[0];if(!f)return;const r=new FileReader();
+    r.onload=()=>{try{const o=JSON.parse(r.result);
+      if(o.parcels){state=o;}else if(o.state){state=o.state;}
+      activeId=state.parcels[0].id;selType=null;selId=null;render();toast('Imported');
+    }catch(err){alert('Could not read that file.')}};
+    r.readAsText(f);};
+  inp.click();
+}
+function newProject(){
+  if(!confirm('Start a new blank project? Export first to keep the current one.'))return;
+  state=blankState();activeId=state.parcels[0].id;selType=null;selId=null;render();toast('New project');
+}
+
+/* ================= Sample ================= */
+function loadSample(){
+  if(!confirm('Load sample data? This replaces the current project.'))return;
+  state={project:'Riverbend – SW¼ Sec 12 (100-yr)',parcels:[]};
+  const p1=newParcel('Parcel A · 82-05-12-300-004');p1.color=PARCEL_COLORS[0];
+  const mk=(o)=>Object.assign({id:uid(),kind:'deed',grantor:'',grantee:'',idate:'',rdate:'',docnum:'',bookpage:'',notes:'',partial:false,interest:'1/1',origin:false},o);
+  const b1=mk({kind:'deed',x:340,y:60,grantor:'John A. Smith & Mary Smith',grantee:'Riverbend Holdings, LLC',idate:'04/10/2019',rdate:'04/12/2019',docnum:'2019-003626'});
+  const b2=mk({kind:'deed',x:120,y:300,grantor:'Estate of Harold Smith',grantee:'John A. Smith',rdate:'06/30/2004',bookpage:'388 / 214',partial:true,interest:'2/9'});
+  const b3=mk({kind:'deed',x:560,y:300,grantor:'Clara Smith-Jones et al.',grantee:'John A. Smith',rdate:'06/30/2004',bookpage:'388 / 216',partial:true,interest:'7/9'});
+  const b4=mk({kind:'probate',x:120,y:540,grantor:'Harold Smith, deceased',grantee:'Estate of Harold Smith',rdate:'05/2004',docnum:'65C01-0405-EU-14',notes:'Devised undivided 2/9',partial:true,interest:'2/9',origin:true});
+  const b5=mk({kind:'mortgage',x:560,y:540,grantor:'Riverbend Holdings, LLC',grantee:'German American Bank',rdate:'04/12/2019',docnum:'2019-003627',notes:'Open – pay at closing'});
+  p1.boxes=[b1,b2,b3,b4,b5];
+  p1.arrows=[{id:uid(),from:b2,to:b1},{id:uid(),from:b3,to:b1},{id:uid(),from:b4,to:b2},{id:uid(),from:b5,to:b1}]
+    .map(a=>({id:a.id,from:a.from.id,to:a.to.id}));
+  const p2=newParcel('Parcel B · 82-05-12-300-005');p2.color=PARCEL_COLORS[1];
+  const c1=mk({kind:'deed',x:300,y:80,grantor:'Riverbend Holdings, LLC',grantee:'(same project – adjoining lot)',rdate:'04/12/2019',docnum:'2019-003626',notes:'Same deed, second parcel'});
+  p2.boxes=[c1];
+  state.parcels=[p1,p2];activeId=p1.id;selType=null;selId=null;
+  render();toast('Sample loaded');
+}
+
+/* ================= PDF export (print-to-PDF, one page per parcel) ================= */
+// Build the printable pages into `root` inside document `doc` (works for the main doc or a print window).
+function buildPrintPages(doc,root){
+  const today=new Date().toLocaleDateString();
+  const pages=[];
+  state.parcels.forEach(p=>{
+    const page=doc.createElement('div');page.className='print-page';
+    const head=doc.createElement('div');head.className='print-head';
+    head.innerHTML=`<div class="pt">${esc(state.project||'Title Chain')}</div>
+      <div class="ps">${esc(p.name)} &nbsp;&bull;&nbsp; ${p.boxes.length} instrument${p.boxes.length!==1?'s':''} &nbsp;&bull;&nbsp; ${p.arrows.length} conveyance${p.arrows.length!==1?'s':''} &nbsp;&bull;&nbsp; printed ${today}</div>`;
+    page.appendChild(head);
+    const stage=doc.createElement('div');stage.className='print-stage';
+    const wr=doc.createElement('div');wr.className='print-world';
+    const psvg=doc.createElementNS('http://www.w3.org/2000/svg','svg');
+    psvg.style.cssText='position:absolute;left:0;top:0;overflow:visible;z-index:1';
+    wr.appendChild(psvg);
+    p.boxes.forEach(b=>{
+      const el=doc.createElement('div');el.className='box';el.dataset.pid=b.id;
+      el.style.left=b.x+'px';el.style.top=b.y+'px';el.style.zIndex=2;
+      styleBox(el,b,p);el.innerHTML=boxInner(b,p);
+      wr.appendChild(el);
+    });
+    stage.appendChild(wr);page.appendChild(stage);root.appendChild(page);
+    pages.push({p,stage,wr,psvg});
+  });
+  // measure heights (in DOM), draw arrows, then scale each parcel to fit the page
+  pages.forEach(({p,stage,wr,psvg})=>{
+    if(!p.boxes.length){stage.style.height='36px';return;}
+    const sizeOf=id=>{const el=wr.querySelector('.box[data-pid="'+id+'"]');return el?{w:el.offsetWidth,h:el.offsetHeight}:{w:222,h:110}};
+    let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+    p.boxes.forEach(b=>{const s=sizeOf(b.id);minX=Math.min(minX,b.x);minY=Math.min(minY,b.y);maxX=Math.max(maxX,b.x+s.w);maxY=Math.max(maxY,b.y+s.h);});
+    const rOf=id=>{const b=p.boxes.find(x=>x.id===id);if(!b)return null;const s=sizeOf(id);return{x:b.x,y:b.y,w:s.w,h:s.h};};
+    const parts=[`<defs><marker id="pah" markerWidth="12" markerHeight="12" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 Z" fill="#4a5a72"/></marker></defs>`];
+    p.arrows.forEach(a=>{const A=rOf(a.from),B=rOf(a.to);if(!A||!B)return;
+      const cA={x:A.x+A.w/2,y:A.y+A.h/2},cB={x:B.x+B.w/2,y:B.y+B.h/2};
+      const s=edgePoint(A,cB),t=edgePoint(B,cA);
+      parts.push(`<path d="M${s.x},${s.y} L${t.x},${t.y}" stroke="#4a5a72" stroke-width="1.8" fill="none" marker-end="url(#pah)"/>`);});
+    psvg.innerHTML=parts.join('');
+    const pad=26;minX-=pad;minY-=pad;maxX+=pad;maxY+=pad;
+    const cw=maxX-minX,ch=maxY-minY;
+    const scale=Math.min(720/cw,940/ch,1.1);
+    wr.style.transform=`scale(${scale}) translate(${-minX}px,${-minY}px)`;
+    stage.style.width=(cw*scale)+'px';stage.style.height=(ch*scale)+'px';
+  });
+}
+function exportPDF(){
+  // Prefer a dedicated print window: it is a normal (non-sandboxed) tab, so the print dialog works
+  // even when the app itself is embedded in a locked-down frame (the shared web version).
+  let w=null;try{w=window.open('','_blank','width=1000,height=720');}catch(_){}
+  if(w&&w.document){
+    const css=(document.querySelector('style')||{}).textContent||'';
+    const extra='html,body{margin:0;background:#fff;overflow:auto}'+
+      '.print-root{position:static !important;left:auto !important;top:auto !important;padding:18px}'+
+      '.print-root .box .handle{display:none !important}@media print{.print-root{padding:0}}';
+    const doc=w.document;doc.open();
+    doc.write('<!doctype html><html><head><meta charset="utf-8"><title>'+esc(state.project||'Title Chain')+
+      '</title><style>'+css+'</style><style>'+extra+'</style></head><body><div class="print-root" id="pr"></div></body></html>');
+    doc.close();
+    const go=()=>{try{buildPrintPages(doc,doc.getElementById('pr'));}catch(_){}
+      setTimeout(()=>{try{w.focus();w.print();}catch(_){}},250);
+      try{w.onafterprint=()=>setTimeout(()=>{try{w.close();}catch(_){}},300);}catch(_){}
+    };
+    if(doc.readyState==='complete')setTimeout(go,60);else w.onload=go;
+    toast('Opening printable view…');return;
+  }
+  // Pop-up was blocked. In the sandboxed shared version, in-place print is blocked too — explain it.
+  if(isFramed()){showPrintHelp();return;}
+  // Standalone file with pop-ups blocked: print the current document in place.
+  exportPDFInline();
+}
+function exportPDFInline(){
+  const old=document.querySelector('.print-root');if(old)old.remove();
+  const root=document.createElement('div');root.className='print-root';
+  buildPrintPages(document,root);
+  document.body.appendChild(root);
+  const cleanup=()=>{const r=document.querySelector('.print-root');if(r)r.remove();window.removeEventListener('afterprint',cleanup);};
+  window.addEventListener('afterprint',cleanup);
+  setTimeout(()=>{try{window.print();}catch(_){}setTimeout(cleanup,1500);},80);
+}
+
+/* ================= In-app modal (sandbox-safe fallback for downloads/print) ================= */
+function isFramed(){try{return window.self!==window.top}catch(_){return true}}
+function closeModalPanel(){const o=document.getElementById('xoverlay');if(o)o.remove()}
+function showModalPanel(opts){
+  closeModalPanel();
+  const ov=document.createElement('div');ov.className='xoverlay';ov.id='xoverlay';
+  ov.innerHTML=`<div class="xpanel"><div class="xhead">${esc(opts.title)}<button class="xclose" aria-label="Close">&times;</button></div>
+    <div class="xbody">${opts.bodyHTML}</div><div class="xfoot"></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('.xclose').onclick=closeModalPanel;
+  ov.addEventListener('mousedown',e=>{if(e.target===ov)closeModalPanel()});
+  const foot=ov.querySelector('.xfoot');
+  (opts.buttons||[]).forEach(b=>{const btn=document.createElement('button');btn.className='xbtn'+(b.primary?' primary':'');btn.textContent=b.label;btn.onclick=b.onClick;foot.appendChild(btn)});
+  if(opts.onShow)setTimeout(opts.onShow,30);
+}
+function showExportPanel(fname,data){
+  showModalPanel({
+    title:'Export data',
+    bodyHTML:`<p class="xnote">The shared web version runs in a restricted frame that can't save files. Copy everything below and paste it into a plain text file named <b>${esc(fname)}</b> — or open the standalone app to download directly.</p>
+      <textarea class="xtext" id="xdata" readonly>${esc(data)}</textarea>`,
+    buttons:[{label:'Copy to clipboard',primary:true,onClick:copyExportData},{label:'Close',onClick:closeModalPanel}],
+    onShow:()=>{const t=document.getElementById('xdata');if(t){t.focus();t.select()}}
+  });
+}
+function copyExportData(){
+  const t=document.getElementById('xdata');if(!t)return;t.focus();t.select();
+  const ok=()=>toast('Copied to clipboard');
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t.value).then(ok,()=>{try{document.execCommand('copy');ok()}catch(_){toast('Press Ctrl+C to copy')}});
+  }else{try{document.execCommand('copy');ok()}catch(_){toast('Press Ctrl+C to copy')}}
+}
+function showPrintHelp(){
+  showModalPanel({
+    title:'Save as PDF',
+    bodyHTML:`<p class="xnote">This shared web version runs in a restricted frame, so it can't open the browser's print window.<br><br>
+      <b>To save a PDF:</b> open the standalone file (<b>title-chain-tracker.html</b>) and click <b>PDF</b> there — it opens the normal print dialog with a “Save as PDF” option.<br><br>
+      If you see a “pop-up blocked” icon in your browser's address bar, you can also allow pop-ups for this page and click PDF again.</p>`,
+    buttons:[{label:'Got it',primary:true,onClick:closeModalPanel}]
+  });
+}
+
+/* ================= Utils ================= */
+function esc(s){return(s==null?'':(''+s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+let tt=null;
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),1500)}
+
+/* ================= Boot ================= */
+if(!load()){activeId=state.parcels[0].id}
+render();
+</script>
+</body>
+</html>
