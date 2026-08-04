@@ -170,6 +170,12 @@
   .xbtn:hover{background:#f2f5f9}
   .xbtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .xbtn.primary:hover{background:var(--accent-d)}
+  .savegrid{display:flex;flex-direction:column;gap:9px}
+  .savebtn{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;
+    border:1px solid var(--line);background:#fff;border-radius:9px;padding:11px 13px;cursor:pointer}
+  .savebtn:hover{background:#f4f8fe;border-color:#bcd6f4}
+  .savebtn b{font-size:14px;color:var(--accent-d)}
+  .savebtn span{font-size:12px;color:var(--muted)}
 
   /* ---- PDF / print view (built off-screen, revealed only when printing) ---- */
   .print-root{position:fixed;left:-100000px;top:0;background:#fff;color:#111}
@@ -204,7 +210,7 @@
       <button class="btn ghost" onclick="loadSample()">Sample</button>
       <button class="btn ghost" onclick="importJSON()">Import</button>
       <button class="btn ghost" onclick="exportJSON()">Export</button>
-      <button class="btn" onclick="exportPDF()">PDF</button>
+      <button class="btn" onclick="openSaveDialog()">Save PDF / Image</button>
       <button class="btn ghost" onclick="newProject()">New</button>
     </div>
   </header>
@@ -820,84 +826,291 @@ function loadSample(){
   render();toast('Sample loaded');
 }
 
-/* ================= PDF export (print-to-PDF, one page per parcel) ================= */
-// Build the printable pages into `root` inside document `doc` (works for the main doc or a print window).
-function buildPrintPages(doc,root){
-  const today=new Date().toLocaleDateString();
-  const pages=[];
-  state.parcels.forEach(p=>{
-    const page=doc.createElement('div');page.className='print-page';
-    const head=doc.createElement('div');head.className='print-head';
-    head.innerHTML=`<div class="pt">${esc(state.project||'Title Chain')}</div>
-      <div class="ps">${esc(p.name)} &nbsp;&bull;&nbsp; ${p.boxes.length} instrument${p.boxes.length!==1?'s':''} &nbsp;&bull;&nbsp; ${p.arrows.length} conveyance${p.arrows.length!==1?'s':''} &nbsp;&bull;&nbsp; printed ${today}</div>`;
-    page.appendChild(head);
-    const stage=doc.createElement('div');stage.className='print-stage';
-    const wr=doc.createElement('div');wr.className='print-world';
-    const psvg=doc.createElementNS('http://www.w3.org/2000/svg','svg');
-    psvg.style.cssText='position:absolute;left:0;top:0;overflow:visible;z-index:1';
-    wr.appendChild(psvg);
-    p.boxes.forEach(b=>{
-      const el=doc.createElement('div');el.className='box';el.dataset.pid=b.id;
-      el.style.left=b.x+'px';el.style.top=b.y+'px';el.style.zIndex=2;
-      styleBox(el,b,p);el.innerHTML=boxInner(b,p);
-      wr.appendChild(el);
-    });
-    stage.appendChild(wr);page.appendChild(stage);root.appendChild(page);
-    pages.push({p,stage,wr,psvg});
-  });
-  // measure heights (in DOM), draw arrows, then scale each parcel to fit the page
-  pages.forEach(({p,stage,wr,psvg})=>{
-    if(!p.boxes.length){stage.style.height='36px';return;}
-    const sizeOf=id=>{const el=wr.querySelector('.box[data-pid="'+id+'"]');return el?{w:el.offsetWidth,h:el.offsetHeight}:{w:222,h:110}};
-    let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
-    p.boxes.forEach(b=>{const s=sizeOf(b.id);minX=Math.min(minX,b.x);minY=Math.min(minY,b.y);maxX=Math.max(maxX,b.x+s.w);maxY=Math.max(maxY,b.y+s.h);});
-    const rOf=id=>{const b=p.boxes.find(x=>x.id===id);if(!b)return null;const s=sizeOf(id);return{x:b.x,y:b.y,w:s.w,h:s.h};};
-    const parts=[`<defs><marker id="pah" markerWidth="12" markerHeight="12" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 Z" fill="#4a5a72"/></marker></defs>`];
-    p.arrows.forEach(a=>{const A=rOf(a.from),B=rOf(a.to);if(!A||!B)return;
-      const cA={x:A.x+A.w/2,y:A.y+A.h/2},cB={x:B.x+B.w/2,y:B.y+B.h/2};
-      const s=edgePoint(A,cB),t=edgePoint(B,cA);
-      parts.push(`<path d="M${s.x},${s.y} L${t.x},${t.y}" stroke="#4a5a72" stroke-width="1.8" fill="none" marker-end="url(#pah)"/>`);});
-    psvg.innerHTML=parts.join('');
-    const pad=26;minX-=pad;minY-=pad;maxX+=pad;maxY+=pad;
-    const cw=maxX-minX,ch=maxY-minY;
-    const scale=Math.min(720/cw,940/ch,1.1);
-    wr.style.transform=`scale(${scale}) translate(${-minX}px,${-minY}px)`;
-    stage.style.width=(cw*scale)+'px';stage.style.height=(ch*scale)+'px';
-  });
+/* ================= Diagram export (high-res image / PDF, no print dialog) ================= */
+const EXPORT_SCALE=2.5;                 // render multiplier -> high-resolution output
+const BOX_W=222;
+const FSTACK='"Segoe UI",-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif';
+const FONTS={
+  kind:'700 10.5px '+FSTACK, badge:'700 10px '+FSTACK,
+  party:'650 13.5px '+FSTACK, grantee:'600 13.5px '+FSTACK,
+  to:'11px '+FSTACK, meta:'11.5px '+FSTACK, metaLab:'600 11.5px '+FSTACK,
+  schip:'700 10.5px '+FSTACK, h1:'700 18px '+FSTACK, h2:'12px '+FSTACK
+};
+function statChipText(st){
+  if(!st)return null;
+  const M={origin:['◆ Origin of title','#5b3ad6','#eceafe'],
+    ok:['✓ Interest sourced','#1c7a43','#e7f6ec'],
+    missing:['⚠ Missing '+(st.gap?fracStr(st.gap):''),'#b02a37','#fdeced'],
+    unsourced:['⚠ No prior deed','#b02a37','#fdeced'],
+    over:['⚠ Over '+(st.gap?fracStr(st.gap):''),'#8a5a00','#fff4dd']};
+  const m=M[st.state];return m?{text:m[0],c:m[1],bg:m[2]}:null;
 }
-function exportPDF(){
-  // Prefer a dedicated print window: it is a normal (non-sandboxed) tab, so the print dialog works
-  // even when the app itself is embedded in a locked-down frame (the shared web version).
-  let w=null;try{w=window.open('','_blank','width=1000,height=720');}catch(_){}
-  if(w&&w.document){
-    const css=(document.querySelector('style')||{}).textContent||'';
-    const extra='html,body{margin:0;background:#fff;overflow:auto}'+
-      '.print-root{position:static !important;left:auto !important;top:auto !important;padding:18px}'+
-      '.print-root .box .handle{display:none !important}@media print{.print-root{padding:0}}';
-    const doc=w.document;doc.open();
-    doc.write('<!doctype html><html><head><meta charset="utf-8"><title>'+esc(state.project||'Title Chain')+
-      '</title><style>'+css+'</style><style>'+extra+'</style></head><body><div class="print-root" id="pr"></div></body></html>');
-    doc.close();
-    const go=()=>{try{buildPrintPages(doc,doc.getElementById('pr'));}catch(_){}
-      setTimeout(()=>{try{w.focus();w.print();}catch(_){}},250);
-      try{w.onafterprint=()=>setTimeout(()=>{try{w.close();}catch(_){}},300);}catch(_){}
-    };
-    if(doc.readyState==='complete')setTimeout(go,60);else w.onload=go;
-    toast('Opening printable view…');return;
+function wrapLines(ctx,text,maxW){
+  const words=(''+text).split(/\s+/).filter(Boolean);
+  if(!words.length)return[''];
+  const lines=[];let cur=words[0];
+  for(let i=1;i<words.length;i++){
+    const t=cur+' '+words[i];
+    if(ctx.measureText(t).width<=maxW)cur=t;else{lines.push(cur);cur=words[i];}
   }
-  // Pop-up was blocked. In the sandboxed shared version, in-place print is blocked too — explain it.
-  if(isFramed()){showPrintHelp();return;}
-  // Standalone file with pop-ups blocked: print the current document in place.
-  exportPDFInline();
+  lines.push(cur);
+  const out=[];
+  lines.forEach(l=>{
+    if(ctx.measureText(l).width<=maxW){out.push(l);return;}
+    let s='';
+    for(const ch of l){if(s&&ctx.measureText(s+ch).width>maxW){out.push(s);s=ch}else s+=ch}
+    if(s)out.push(s);
+  });
+  return out;
 }
-function exportPDFInline(){
-  const old=document.querySelector('.print-root');if(old)old.remove();
-  const root=document.createElement('div');root.className='print-root';
-  buildPrintPages(document,root);
-  document.body.appendChild(root);
-  const cleanup=()=>{const r=document.querySelector('.print-root');if(r)r.remove();window.removeEventListener('afterprint',cleanup);};
-  window.addEventListener('afterprint',cleanup);
-  setTimeout(()=>{try{window.print();}catch(_){}setTimeout(cleanup,1500);},80);
+// Compute a box's drawing plan and total height (mirrors the on-screen card layout).
+function layoutBox(ctx,b,parcel){
+  const PAD=11, inner=BOX_W-PAD*2, LH=17;
+  const k=KINDS[b.kind]||KINDS.deed;
+  const rows=[];let y=9;
+  rows.push({t:'chip',label:k.label.toUpperCase(),c:k.c,bg:k.bg,
+    badge:(b.partial&&OWNERSHIP.has(b.kind))?fracStr(interestOf(b))+' interest':null});
+  y+=17+6;
+  if(b.kind==='note'){
+    ctx.font=FONTS.party;
+    const lines=wrapLines(ctx,b.notes||'Note',inner);
+    rows.push({t:'lines',font:FONTS.party,color:'#1f2733',lines,lh:LH});y+=lines.length*LH;
+  }else{
+    ctx.font=FONTS.party;
+    const gl=wrapLines(ctx,b.grantor||'Grantor',inner);
+    rows.push({t:'lines',font:FONTS.party,color:'#1f2733',lines:gl,lh:LH});y+=gl.length*LH;
+    rows.push({t:'to'});y+=15;
+    ctx.font=FONTS.grantee;
+    const gr=wrapLines(ctx,b.grantee||'Grantee',inner);
+    rows.push({t:'lines',font:FONTS.grantee,color:'#33455f',lines:gr,lh:LH});y+=gr.length*LH;
+    const meta=[];
+    if(b.idate)meta.push(['Inst',b.idate]);
+    if(b.rdate)meta.push(['Rec',b.rdate]);
+    if(b.docnum)meta.push(['Doc#',b.docnum]);
+    if(b.bookpage)meta.push(['Bk/Pg',b.bookpage]);
+    if(b.notes)meta.push(['Note',b.notes]);
+    if(meta.length){
+      y+=7;rows.push({t:'sep'});y+=7;
+      ctx.font=FONTS.meta;
+      const mrows=meta.map(([lab,val])=>({lab,vlines:wrapLines(ctx,val,inner-38)}));
+      rows.push({t:'meta',rows:mrows});
+      mrows.forEach(r=>{y+=r.vlines.length*15+2});
+    }
+  }
+  const chip=statChipText(interestStatus(b,parcel));
+  if(chip){y+=9;rows.push({t:'schip',chip});y+=19}
+  y+=11;
+  return {w:BOX_W,h:Math.round(y),rows};
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);
+  ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
+}
+function pill(ctx,x,y,text,font,color,bg){
+  ctx.font=font;const w=ctx.measureText(text).width+14,h=16;
+  ctx.fillStyle=bg;roundRect(ctx,x,y,w,h,8);ctx.fill();
+  ctx.fillStyle=color;ctx.textBaseline='middle';ctx.fillText(text,x+7,y+h/2+.5);
+  ctx.textBaseline='alphabetic';return w;
+}
+function drawBox(ctx,b,L,parcel){
+  const x=b.x,y=b.y,PAD=11;
+  const k=KINDS[b.kind]||KINDS.deed;
+  const st=interestStatus(b,parcel);
+  // card
+  ctx.save();
+  ctx.shadowColor='rgba(20,30,50,.10)';ctx.shadowBlur=8;ctx.shadowOffsetY=2;
+  ctx.fillStyle='#fff';roundRect(ctx,x,y,L.w,L.h,10);ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle=(st&&(st.state==='missing'||st.state==='unsourced'))?'#e0616b':
+                  (st&&st.state==='over')?'#d99a2b':'#d9dee6';
+  ctx.lineWidth=(st&&st.state!=='ok'&&st.state!=='origin')?2:1;
+  roundRect(ctx,x+.5,y+.5,L.w-1,L.h-1,10);ctx.stroke();
+  // top accent
+  ctx.save();roundRect(ctx,x,y,L.w,L.h,10);ctx.clip();
+  ctx.fillStyle=k.c;ctx.fillRect(x,y,L.w,3);ctx.restore();
+  let cy=y+9;
+  L.rows.forEach(r=>{
+    if(r.t==='chip'){
+      const w=pill(ctx,x+PAD,cy,r.label,FONTS.kind,r.c,r.bg);
+      if(r.badge)pill(ctx,x+PAD+w+4,cy,r.badge,FONTS.badge,'#5b3ad6','#efeafe');
+      cy+=17+6;
+    }else if(r.t==='lines'){
+      ctx.font=r.font;ctx.fillStyle=r.color;
+      r.lines.forEach(l=>{ctx.fillText(l,x+PAD,cy+12.5);cy+=r.lh});
+    }else if(r.t==='to'){
+      ctx.font=FONTS.to;ctx.fillStyle='#6b7686';ctx.textAlign='center';
+      ctx.fillText('▼ conveys to',x+L.w/2,cy+11);ctx.textAlign='left';cy+=15;
+    }else if(r.t==='sep'){
+      cy+=7;ctx.strokeStyle='#e6eaf0';ctx.lineWidth=1;ctx.setLineDash([3,3]);
+      ctx.beginPath();ctx.moveTo(x+PAD,cy-.5);ctx.lineTo(x+L.w-PAD,cy-.5);ctx.stroke();
+      ctx.setLineDash([]);cy+=7;
+    }else if(r.t==='meta'){
+      r.rows.forEach(m=>{
+        ctx.font=FONTS.metaLab;ctx.fillStyle='#93a0b2';ctx.fillText(m.lab,x+PAD,cy+11);
+        ctx.font=FONTS.meta;ctx.fillStyle='#556';
+        m.vlines.forEach((v,i)=>{ctx.fillText(v,x+PAD+38,cy+11+i*15)});
+        cy+=m.vlines.length*15+2;
+      });
+    }else if(r.t==='schip'){
+      cy+=9;pill(ctx,x+PAD,cy,r.chip.text,FONTS.schip,r.chip.c,r.chip.bg);cy+=19;
+    }
+  });
+}
+function drawArrowTo(ctx,sx,sy,tx,ty){
+  const a=Math.atan2(ty-sy,tx-sx),HL=11,HW=4.6;
+  const ex=tx-Math.cos(a)*HL*.9, ey=ty-Math.sin(a)*HL*.9;
+  ctx.strokeStyle='#4a5a72';ctx.lineWidth=1.8;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(ex,ey);ctx.stroke();
+  ctx.fillStyle='#4a5a72';ctx.beginPath();
+  ctx.moveTo(tx,ty);
+  ctx.lineTo(tx-Math.cos(a)*HL+Math.sin(a)*HW, ty-Math.sin(a)*HL-Math.cos(a)*HW);
+  ctx.lineTo(tx-Math.cos(a)*HL-Math.sin(a)*HW, ty-Math.sin(a)*HL+Math.cos(a)*HW);
+  ctx.closePath();ctx.fill();
+}
+// Render one parcel to a high-resolution canvas, sized to the actual content (never squeezed).
+function renderParcelCanvas(p,scale){
+  scale=scale||EXPORT_SCALE;
+  const meas=document.createElement('canvas').getContext('2d');
+  const L={};p.boxes.forEach(b=>{L[b.id]=layoutBox(meas,b,p)});
+  const PAD=34, HEAD=64;
+  let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  if(p.boxes.length){
+    p.boxes.forEach(b=>{const l=L[b.id];
+      minX=Math.min(minX,b.x);minY=Math.min(minY,b.y);
+      maxX=Math.max(maxX,b.x+l.w);maxY=Math.max(maxY,b.y+l.h);});
+  }else{minX=0;minY=0;maxX=420;maxY=40}
+  const cw=(maxX-minX)+PAD*2, ch=(maxY-minY)+PAD*2+HEAD;
+  const cv=document.createElement('canvas');
+  cv.width=Math.max(1,Math.round(cw*scale));cv.height=Math.max(1,Math.round(ch*scale));
+  const ctx=cv.getContext('2d');
+  ctx.scale(scale,scale);
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,cw,ch);
+  ctx.textBaseline='alphabetic';
+  // header
+  ctx.font=FONTS.h1;ctx.fillStyle='#1a2739';
+  ctx.fillText(state.project||'Title Chain',PAD,30);
+  ctx.font=FONTS.h2;ctx.fillStyle='#55637a';
+  const sub=p.name+'   •   '+p.boxes.length+' instrument'+(p.boxes.length!==1?'s':'')+
+    '   •   '+p.arrows.length+' conveyance'+(p.arrows.length!==1?'s':'')+
+    '   •   '+new Date().toLocaleDateString();
+  ctx.fillText(sub,PAD,48);
+  ctx.strokeStyle='#22344b';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(PAD,58);ctx.lineTo(cw-PAD,58);ctx.stroke();
+  // shift into content space
+  ctx.translate(PAD-minX,HEAD+PAD-minY);
+  // arrows first (under boxes)
+  const rOf=id=>{const b=p.boxes.find(x=>x.id===id);if(!b)return null;const l=L[id];return{x:b.x,y:b.y,w:l.w,h:l.h}};
+  p.arrows.forEach(a=>{
+    const A=rOf(a.from),B=rOf(a.to);if(!A||!B)return;
+    const cA={x:A.x+A.w/2,y:A.y+A.h/2},cB={x:B.x+B.w/2,y:B.y+B.h/2};
+    const s=edgePoint(A,cB),t=edgePoint(B,cA);
+    drawArrowTo(ctx,s.x,s.y,t.x,t.y);
+  });
+  p.boxes.forEach(b=>drawBox(ctx,b,L[b.id],p));
+  return cv;
+}
+/* ---- file helpers ---- */
+function dataURLToBytes(u){const bin=atob(u.split(',')[1]);const a=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return a;}
+function downloadBlob(blob,fname){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=fname;a.rel='noopener';a.style.display='none';
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{try{document.body.removeChild(a)}catch(_){}URL.revokeObjectURL(url)},1200);
+}
+function safeName(s){return (s||'title-chain').replace(/[^a-z0-9\-_]+/gi,'_').replace(/^_+|_+$/g,'')||'title-chain'}
+/* ---- minimal PDF writer: one page per parcel, full-size embedded JPEG ---- */
+function buildPDFBlob(imgs){
+  const chunks=[];let len=0;
+  const push=u=>{chunks.push(u);len+=u.length};
+  const pushS=s=>{const a=new Uint8Array(s.length);for(let i=0;i<s.length;i++)a[i]=s.charCodeAt(i)&0xff;push(a)};
+  const off=[];
+  pushS('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  const N=imgs.length;
+  const objStart=n=>{off[n]=len;pushS(n+' 0 obj\n')};
+  const objEnd=()=>pushS('endobj\n');
+  objStart(1);pushS('<< /Type /Catalog /Pages 2 0 R >>\n');objEnd();
+  objStart(2);pushS('<< /Type /Pages /Kids ['+imgs.map((_,i)=>(3+i*3)+' 0 R').join(' ')+'] /Count '+N+' >>\n');objEnd();
+  imgs.forEach((im,i)=>{
+    const pn=3+i*3,imn=4+i*3,cn=5+i*3;
+    const W=im.pw.toFixed(2),H=im.ph.toFixed(2);
+    objStart(pn);
+    pushS('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+W+' '+H+'] /Resources << /XObject << /Im0 '+imn+' 0 R >> >> /Contents '+cn+' 0 R >>\n');
+    objEnd();
+    objStart(imn);
+    pushS('<< /Type /XObject /Subtype /Image /Width '+im.w+' /Height '+im.h+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+im.bytes.length+' >>\nstream\n');
+    push(im.bytes);pushS('\nendstream\n');objEnd();
+    const content='q '+W+' 0 0 '+H+' 0 0 cm /Im0 Do Q\n';
+    objStart(cn);pushS('<< /Length '+content.length+' >>\nstream\n'+content+'endstream\n');objEnd();
+  });
+  const xref=len,total=2+N*3+1;
+  let x='xref\n0 '+total+'\n0000000000 65535 f \n';
+  for(let n=1;n<total;n++)x+=String(off[n]||0).padStart(10,'0')+' 00000 n \n';
+  pushS(x);
+  pushS('trailer\n<< /Size '+total+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF\n');
+  const out=new Uint8Array(len);let o=0;chunks.forEach(c=>{out.set(c,o);o+=c.length});
+  return new Blob([out],{type:'application/pdf'});
+}
+/* ---- public export actions ---- */
+function exportImage(kind){           // 'jpg' | 'png' — current parcel
+  const p=activeParcel();
+  const cv=renderParcelCanvas(p);
+  const mime=kind==='png'?'image/png':'image/jpeg';
+  const url=cv.toDataURL(mime,kind==='png'?undefined:0.92);
+  const fname=safeName(state.project)+'_'+safeName(p.name)+'.'+(kind==='png'?'png':'jpg');
+  if(isFramed()){showImagePanel(url,fname,cv.width,cv.height);return}
+  fetch(url).then(r=>r.blob()).then(b=>{downloadBlob(b,fname);
+    toast('Saved '+fname+'  ('+cv.width+'×'+cv.height+')');})
+    .catch(()=>{downloadBlob(new Blob([dataURLToBytes(url)],{type:mime}),fname);toast('Saved '+fname)});
+  closeModalPanel();
+}
+function exportPDF(){                 // all parcels, one page each, full size
+  const imgs=[];
+  state.parcels.forEach(p=>{
+    const cv=renderParcelCanvas(p);
+    const url=cv.toDataURL('image/jpeg',0.92);
+    let pw=(cv.width/EXPORT_SCALE)*0.75, ph=(cv.height/EXPORT_SCALE)*0.75;   // css px -> pt
+    const cap=14000;                                                          // PDF page limit
+    if(pw>cap||ph>cap){const f=Math.min(cap/pw,cap/ph);pw*=f;ph*=f}
+    imgs.push({bytes:dataURLToBytes(url),w:cv.width,h:cv.height,pw,ph});
+  });
+  if(!imgs.length){toast('Nothing to export');return}
+  const blob=buildPDFBlob(imgs);
+  const fname=safeName(state.project)+'.pdf';
+  if(isFramed()){showPDFPanel(blob,fname);return}
+  downloadBlob(blob,fname);
+  toast('Saved '+fname+'  ('+imgs.length+' page'+(imgs.length!==1?'s':'')+')');
+  closeModalPanel();
+}
+/* ---- save chooser ---- */
+function openSaveDialog(){
+  const p=activeParcel();
+  const cv=renderParcelCanvas(p);
+  showModalPanel({
+    title:'Save diagram',
+    bodyHTML:`<p class="xnote">Saves the chain at <b>full size</b> in high resolution &mdash; long chains are not shrunk to fit a page.<br>
+      Current parcel renders at <b>${cv.width}&times;${cv.height}px</b>.</p>
+      <div class="savegrid">
+        <button class="savebtn" onclick="exportPDF()"><b>PDF</b><span>All parcels &mdash; one page each</span></button>
+        <button class="savebtn" onclick="exportImage('jpg')"><b>JPG</b><span>This parcel &mdash; high-res image</span></button>
+        <button class="savebtn" onclick="exportImage('png')"><b>PNG</b><span>This parcel &mdash; sharpest text</span></button>
+      </div>`,
+    buttons:[{label:'Cancel',onClick:closeModalPanel}]
+  });
+}
+function showImagePanel(url,fname,w,h){
+  showModalPanel({title:'Save image',
+    bodyHTML:`<p class="xnote">This shared web version can't download files directly. <b>Right-click the image below and choose &ldquo;Save image as&hellip;&rdquo;</b> (on a tablet, press and hold). Suggested name: <b>${esc(fname)}</b><br><span class="mut">${w}&times;${h}px</span></p>
+      <img src="${url}" style="max-width:100%;border:1px solid var(--line);border-radius:8px">`,
+    buttons:[{label:'Close',primary:true,onClick:closeModalPanel}]});
+}
+function showPDFPanel(blob,fname){
+  const url=URL.createObjectURL(blob);
+  showModalPanel({title:'Save PDF',
+    bodyHTML:`<p class="xnote">This shared web version can't download files directly. <b>Open the PDF in a new tab</b>, then save it from there &mdash; or use the app on GitHub Pages / the standalone file, where it downloads straight away.</p>
+      <p><a href="${url}" target="_blank" rel="noopener" class="xbtn primary" style="display:inline-block;text-decoration:none">Open ${esc(fname)}</a></p>`,
+    buttons:[{label:'Close',onClick:closeModalPanel}]});
 }
 
 /* ================= In-app modal (sandbox-safe fallback for downloads/print) ================= */
@@ -930,15 +1143,6 @@ function copyExportData(){
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(t.value).then(ok,()=>{try{document.execCommand('copy');ok()}catch(_){toast('Press Ctrl+C to copy')}});
   }else{try{document.execCommand('copy');ok()}catch(_){toast('Press Ctrl+C to copy')}}
-}
-function showPrintHelp(){
-  showModalPanel({
-    title:'Save as PDF',
-    bodyHTML:`<p class="xnote">This shared web version runs in a restricted frame, so it can't open the browser's print window.<br><br>
-      <b>To save a PDF:</b> open the standalone file (<b>title-chain-tracker.html</b>) and click <b>PDF</b> there — it opens the normal print dialog with a “Save as PDF” option.<br><br>
-      If you see a “pop-up blocked” icon in your browser's address bar, you can also allow pop-ups for this page and click PDF again.</p>`,
-    buttons:[{label:'Got it',primary:true,onClick:closeModalPanel}]
-  });
 }
 
 /* ================= Utils ================= */
