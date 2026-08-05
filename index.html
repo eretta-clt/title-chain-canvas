@@ -170,6 +170,41 @@
   .xbtn:hover{background:#f2f5f9}
   .xbtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .xbtn.primary:hover{background:var(--accent-d)}
+
+  /* ---- Google account / Drive ---- */
+  .gwrap{display:flex;align-items:center;gap:8px}
+  .gsign{display:inline-flex;align-items:center;gap:8px;background:#fff;color:#3c4043;border:1px solid #dadce0;
+    border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .gsign:hover{background:#f7f8f8;box-shadow:0 1px 2px rgba(60,64,67,.3)}
+  .gsign svg{width:15px;height:15px;flex-shrink:0}
+  .gchip{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.1);border:1px solid #3a4d68;
+    border-radius:20px;padding:3px 4px 3px 10px;color:#dce6f4;font-size:12px;font-weight:600;cursor:pointer;max-width:230px}
+  .gchip:hover{background:rgba(255,255,255,.17)}
+  .gchip .em{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gchip .av{width:22px;height:22px;border-radius:50%;background:#7fb3ec;color:#12233a;display:flex;align-items:center;
+    justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;overflow:hidden}
+  .gchip .av img{width:100%;height:100%;object-fit:cover}
+  .savestate{font-size:11.5px;color:#9fb2cc;white-space:nowrap;min-width:0}
+  .savestate b{color:#dce6f4;font-weight:600}
+
+  .flist{display:flex;flex-direction:column;gap:7px;max-height:44vh;overflow:auto;margin-top:4px}
+  .frow{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:9px;padding:9px 11px;
+    background:#fff;cursor:pointer;text-align:left;width:100%}
+  .frow:hover{background:#f4f8fe;border-color:#bcd6f4}
+  .frow .fi{width:26px;height:26px;border-radius:6px;background:#e8f0fb;color:var(--accent);display:flex;
+    align-items:center;justify-content:center;font-weight:800;font-size:12px;flex-shrink:0}
+  .frow .fn{flex:1;min-width:0}
+  .frow .fn b{display:block;font-size:13px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frow .fn span{font-size:11.5px;color:var(--muted)}
+  .frow .fdel{border:none;background:none;color:#9aa6b6;font-size:15px;padding:2px 5px;border-radius:6px;cursor:pointer}
+  .frow .fdel:hover{background:#fdeced;color:#b02a37}
+  .fempty{color:var(--muted);text-align:center;padding:26px 8px;font-size:13px}
+  .gsetup{font-size:12.5px;color:#43506a;line-height:1.6}
+  .gsetup ol{margin:8px 0 0;padding-left:20px}
+  .gsetup li{margin-bottom:7px}
+  .gsetup code{background:#f1f3f7;border:1px solid #e2e7ef;border-radius:4px;padding:1px 5px;font-size:11.5px;
+    font-family:ui-monospace,Consolas,monospace;word-break:break-all}
+  .gwarn{background:#fff4dd;border:1px solid #f0dcae;color:#7a5200;border-radius:8px;padding:9px 11px;font-size:12.5px;line-height:1.5}
   .savegrid{display:flex;flex-direction:column;gap:9px}
   .savebtn{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;
     border:1px solid var(--line);background:#fff;border-radius:9px;padding:11px 13px;cursor:pointer}
@@ -205,6 +240,7 @@
   <header class="app">
     <span class="brand"><span class="mark">§</span> Title Chain Canvas</span>
     <input class="proj-name" id="projName" placeholder="Project name" oninput="setProj(this.value)">
+    <span class="savestate" id="saveState"></span>
     <span class="spacer"></span>
     <div class="tbtns">
       <button class="btn ghost" onclick="loadSample()">Sample</button>
@@ -213,6 +249,7 @@
       <button class="btn" onclick="openSaveDialog()">Save PDF / Image</button>
       <button class="btn ghost" onclick="newProject()">New</button>
     </div>
+    <div class="gwrap" id="gwrap"></div>
   </header>
 
   <div class="toolbar">
@@ -382,7 +419,8 @@ function centerOnBox(id){
 }
 
 /* ================= Persistence ================= */
-function save(){try{localStorage.setItem(STORE_KEY,JSON.stringify({state,activeId}))}catch(e){}}
+function save(){try{localStorage.setItem(STORE_KEY,JSON.stringify({state,activeId}))}catch(e){}
+  if(typeof markCloudDirty==='function')markCloudDirty();}
 function load(){
   try{const raw=localStorage.getItem(STORE_KEY);if(!raw)return false;
     const o=JSON.parse(raw);if(o.state&&o.state.parcels){state=o.state;activeId=o.activeId||state.parcels[0].id;return true;}
@@ -804,7 +842,9 @@ function importJSON(){
 }
 function newProject(){
   if(!confirm('Start a new blank project? Export first to keep the current one.'))return;
-  state=blankState();activeId=state.parcels[0].id;selType=null;selId=null;render();toast('New project');
+  state=blankState();activeId=state.parcels[0].id;selType=null;selId=null;
+  curFile={id:null,name:null};cloudDirty=false;
+  render();updateSaveState();toast('New project');
 }
 
 /* ================= Sample ================= */
@@ -1115,6 +1155,266 @@ function showPDFPanel(blob,fname){
     buttons:[{label:'Close',onClick:closeModalPanel}]});
 }
 
+/* ================= Google Drive sync =================
+   Sign in with a Google Workspace account and keep projects in the user's own Drive.
+   Scope is drive.file — per-file access to files this app creates. The app can never
+   see the rest of the user's Drive, and every file stays inside your Workspace tenant,
+   governed by your existing retention / access policies. ------------------------------ */
+const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file';
+const GSCOPES='openid email profile '+DRIVE_SCOPE;
+const FOLDER_NAME='Title Chain Canvas';
+const TAG_KEY='titleChainCanvas';
+const GCFG_KEY='titleCanvas.gcfg';
+const DRIVE_API='https://www.googleapis.com/drive/v3';
+const DRIVE_UP='https://www.googleapis.com/upload/drive/v3';
+
+let gcfg={clientId:'',hd:''};
+let gTok=null,gTokExp=0,gUser=null,gTokenClient=null,gisReady=false,gisFailed=false;
+let curFile={id:null,name:null};
+let cloudDirty=false;
+
+function gcfgLoad(){try{const r=localStorage.getItem(GCFG_KEY);if(r)gcfg=Object.assign(gcfg,JSON.parse(r))}catch(_){}}
+function gcfgSave(){try{localStorage.setItem(GCFG_KEY,JSON.stringify(gcfg))}catch(_){}}
+function cloudAvailable(){return location.protocol==='http:'||location.protocol==='https:'}
+function signedIn(){return !!(gTok&&Date.now()<gTokExp)}
+
+function loadGIS(cb){
+  if(gisReady)return cb();
+  if(window.google&&google.accounts&&google.accounts.oauth2){gisReady=true;return cb()}
+  const s=document.createElement('script');
+  s.src='https://accounts.google.com/gsi/client';s.async=true;s.defer=true;
+  s.onload=()=>{gisReady=true;cb()};
+  s.onerror=()=>{gisFailed=true;cb(new Error('blocked'))};
+  document.head.appendChild(s);
+}
+function initTokenClient(){
+  if(gTokenClient)return gTokenClient;
+  gTokenClient=google.accounts.oauth2.initTokenClient({
+    client_id:gcfg.clientId,scope:GSCOPES,
+    hd:gcfg.hd||undefined,
+    callback:r=>{
+      if(r&&r.access_token){
+        gTok=r.access_token;gTokExp=Date.now()+((+r.expires_in||3600)-120)*1000;
+        fetchUser().then(()=>{renderAccount();if(gPending){const f=gPending;gPending=null;f()}});
+      }else{toast('Sign-in was cancelled')}
+    },
+    error_callback:e=>{toast('Sign-in failed'+(e&&e.type?': '+e.type:''))}
+  });
+  return gTokenClient;
+}
+let gPending=null;
+function signIn(then){
+  if(!cloudAvailable()){showCloudUnavailable();return}
+  if(!gcfg.clientId){showDriveSetup();return}
+  gPending=then||null;
+  loadGIS(err=>{
+    if(err){showCloudBlocked();return}
+    try{initTokenClient().requestAccessToken({prompt:signedIn()?'':'consent'})}
+    catch(e){toast('Could not start sign-in')}
+  });
+}
+function ensureToken(then){
+  if(signedIn())return then();
+  if(!gcfg.clientId){showDriveSetup();return}
+  gPending=then;
+  loadGIS(err=>{
+    if(err){showCloudBlocked();return}
+    try{initTokenClient().requestAccessToken({prompt:''})}catch(e){toast('Could not refresh sign-in')}
+  });
+}
+function signOut(){
+  const t=gTok;
+  gTok=null;gTokExp=0;gUser=null;curFile={id:null,name:null};
+  try{if(t&&window.google&&google.accounts)google.accounts.oauth2.revoke(t,()=>{})}catch(_){}
+  renderAccount();updateSaveState();toast('Signed out');
+}
+function fetchUser(){
+  return fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+gTok}})
+    .then(r=>r.ok?r.json():null).then(u=>{
+      gUser=u||null;
+      // Domain guard. NOTE: this is a convenience check, not the security boundary —
+      // each user only ever reaches their OWN Drive, and your Workspace admin controls
+      // which accounts may authorize the app at all.
+      if(gUser&&gcfg.hd&&gUser.hd!==gcfg.hd&&!(gUser.email||'').endsWith('@'+gcfg.hd)){
+        const bad=gUser.email||'that account';
+        gTok=null;gTokExp=0;gUser=null;
+        showModalPanel({title:'Wrong account',
+          bodyHTML:`<p class="xnote">You signed in as <b>${esc(bad)}</b>, which isn't a <b>@${esc(gcfg.hd)}</b> account.<br><br>Please sign in with your work account.</p>`,
+          buttons:[{label:'Try again',primary:true,onClick:()=>{closeModalPanel();signIn()}},{label:'Close',onClick:closeModalPanel}]});
+      }
+    }).catch(()=>{gUser=null});
+}
+function gfetch(url,opts){
+  opts=opts||{};opts.headers=Object.assign({Authorization:'Bearer '+gTok},opts.headers||{});
+  return fetch(url,opts).then(r=>{
+    if(r.status===401){gTok=null;gTokExp=0;renderAccount();throw new Error('Session expired — please sign in again')}
+    if(!r.ok)return r.text().then(t=>{throw new Error('Drive error '+r.status+(t?': '+t.slice(0,140):''))});
+    return r;
+  });
+}
+function driveFolder(){
+  const q="mimeType='application/vnd.google-apps.folder' and name='"+FOLDER_NAME+"' and trashed=false";
+  return gfetch(DRIVE_API+'/files?q='+encodeURIComponent(q)+'&fields=files(id)&pageSize=1')
+    .then(r=>r.json()).then(d=>{
+      if(d.files&&d.files.length)return d.files[0].id;
+      return gfetch(DRIVE_API+'/files?fields=id',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:FOLDER_NAME,mimeType:'application/vnd.google-apps.folder'})})
+        .then(r=>r.json()).then(f=>f.id);
+    });
+}
+function driveList(){
+  const q="trashed=false and appProperties has {key='"+TAG_KEY+"' and value='1'}";
+  return gfetch(DRIVE_API+'/files?q='+encodeURIComponent(q)+
+    '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&pageSize=100')
+    .then(r=>r.json()).then(d=>d.files||[]);
+}
+function driveSave(asNew){
+  ensureToken(()=>{
+    const name=(state.project||'Untitled Search').replace(/[\\/:*?"<>|]/g,'-').trim()||'Untitled Search';
+    const fname=name+'.tcc.json';
+    const content=JSON.stringify(state,null,2);
+    const bd='tccb'+Date.now();
+    const build=meta=>'--'+bd+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+
+      JSON.stringify(meta)+'\r\n--'+bd+'\r\nContent-Type: application/json\r\n\r\n'+content+'\r\n--'+bd+'--';
+    const hdrs={'Content-Type':'multipart/related; boundary='+bd};
+    setSaveState('Saving…');
+    const go=(!asNew&&curFile.id)
+      ? Promise.resolve(gfetch(DRIVE_UP+'/files/'+curFile.id+'?uploadType=multipart&fields=id,name',
+          {method:'PATCH',headers:hdrs,body:build({name:fname})}))
+      : driveFolder().then(fid=>gfetch(DRIVE_UP+'/files?uploadType=multipart&fields=id,name',
+          {method:'POST',headers:hdrs,
+           body:build({name:fname,parents:[fid],mimeType:'application/json',appProperties:{[TAG_KEY]:'1'}})}));
+    go.then(r=>r.json()).then(f=>{
+      curFile={id:f.id,name:f.name};cloudDirty=false;updateSaveState();toast('Saved to Drive');
+    }).catch(e=>{setSaveState('');showDriveError(e)});
+  });
+}
+function driveOpen(id,name){
+  ensureToken(()=>{
+    setSaveState('Opening…');
+    gfetch(DRIVE_API+'/files/'+id+'?alt=media').then(r=>r.json()).then(o=>{
+      const obj=o&&o.parcels?o:(o&&o.state&&o.state.parcels?o.state:null);
+      if(!obj)throw new Error('That file is not a Title Chain project.');
+      state=obj;activeId=state.parcels[0].id;selType=null;selId=null;
+      curFile={id,name};cloudDirty=false;
+      closeModalPanel();render();updateSaveState();toast('Opened from Drive');
+    }).catch(e=>{setSaveState('');showDriveError(e)});
+  });
+}
+function driveTrash(id,name,after){
+  if(!confirm('Move "'+(name||'this project')+'" to the Drive trash?\n\nYou can restore it from Drive for 30 days.'))return;
+  ensureToken(()=>{
+    gfetch(DRIVE_API+'/files/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({trashed:true})})
+      .then(()=>{if(curFile.id===id){curFile={id:null,name:null};updateSaveState()}toast('Moved to trash');if(after)after()})
+      .catch(e=>showDriveError(e));
+  });
+}
+function openDriveBrowser(){
+  ensureToken(()=>{
+    showModalPanel({title:'Open from Drive',bodyHTML:'<div class="fempty">Loading your projects…</div>',
+      buttons:[{label:'Close',onClick:closeModalPanel}]});
+    driveList().then(files=>{
+      const body=document.querySelector('#xoverlay .xbody');if(!body)return;
+      if(!files.length){
+        body.innerHTML='<div class="fempty">No saved projects yet.<br>Use <b>Save to Drive</b> to store this one.</div>';return;
+      }
+      body.innerHTML='<div class="flist">'+files.map(f=>{
+        const nm=f.name.replace(/\.tcc\.json$/,'');
+        const when=f.modifiedTime?new Date(f.modifiedTime).toLocaleString():'';
+        return `<div class="frow" data-id="${esc(f.id)}" data-name="${esc(f.name)}">
+          <span class="fi">§</span><span class="fn"><b>${esc(nm)}</b><span>${esc(when)}</span></span>
+          <button class="fdel" title="Move to trash" data-del="${esc(f.id)}">&times;</button></div>`;
+      }).join('')+'</div>';
+      body.querySelectorAll('.frow').forEach(row=>{
+        row.addEventListener('click',e=>{
+          if(e.target.closest('[data-del]')){e.stopPropagation();
+            driveTrash(row.dataset.id,row.dataset.name.replace(/\.tcc\.json$/,''),openDriveBrowser);return}
+          driveOpen(row.dataset.id,row.dataset.name);
+        });
+      });
+    }).catch(e=>{closeModalPanel();showDriveError(e)});
+  });
+}
+function showDriveError(e){
+  showModalPanel({title:'Drive problem',
+    bodyHTML:`<p class="xnote">${esc((e&&e.message)||'Something went wrong talking to Google Drive.')}</p>
+      <p class="xnote">If this keeps happening, sign out and sign back in. Your work is still saved in this browser.</p>`,
+    buttons:[{label:'OK',primary:true,onClick:closeModalPanel}]});
+}
+function showCloudUnavailable(){
+  showModalPanel({title:'Open the hosted version to use Drive',
+    bodyHTML:`<p class="xnote">Google sign-in only works on a real web address, not a file opened from your computer.</p>
+      <div class="gwarn">Use the hosted app, then sign in there:<br><b>https://eretta-clt.github.io/title-chain-canvas/</b></div>`,
+    buttons:[{label:'OK',primary:true,onClick:closeModalPanel}]});
+}
+function showCloudBlocked(){
+  showModalPanel({title:'Google sign-in blocked',
+    bodyHTML:`<p class="xnote">The Google sign-in script couldn't load here. This happens in embedded previews that block outside scripts.</p>
+      <div class="gwarn">Open the hosted app directly and sign in there:<br><b>https://eretta-clt.github.io/title-chain-canvas/</b></div>`,
+    buttons:[{label:'OK',primary:true,onClick:closeModalPanel}]});
+}
+function showDriveSetup(){
+  const origin=location.origin;
+  showModalPanel({title:'Connect Google Drive (one-time setup)',
+    bodyHTML:`<div class="gsetup">
+      <p style="margin:0 0 10px">Someone with access to your Google Cloud console does this once for the whole firm. Then everyone just clicks <b>Sign in</b>.</p>
+      <ol>
+        <li>Go to <code>console.cloud.google.com</code> &rarr; create a project (e.g. “Title Chain Canvas”).</li>
+        <li><b>APIs &amp; Services &rarr; Library</b> &rarr; enable <b>Google Drive API</b>.</li>
+        <li><b>OAuth consent screen</b> &rarr; User type <b>Internal</b> (keeps it to your Workspace) &rarr; fill in app name and support email.</li>
+        <li><b>Credentials &rarr; Create credentials &rarr; OAuth client ID</b> &rarr; type <b>Web application</b>.</li>
+        <li>Under <b>Authorized JavaScript origins</b> add:<br><code>${esc(origin)}</code></li>
+        <li>Copy the <b>Client ID</b> and paste it below.</li>
+      </ol>
+      <div class="fld" style="margin-top:12px"><label>Google OAuth Client ID</label>
+        <input id="gci" placeholder="1234567890-abc123.apps.googleusercontent.com" value="${esc(gcfg.clientId)}"></div>
+      <div class="fld" style="margin-top:10px"><label>Restrict to email domain (optional)</label>
+        <input id="ghd" placeholder="chasteenland.com" value="${esc(gcfg.hd)}"></div>
+      <p class="xnote" style="margin-top:12px">Only the scope <code>drive.file</code> is requested — the app can only touch files it creates, never the rest of anyone's Drive.</p>
+    </div>`,
+    buttons:[{label:'Save & sign in',primary:true,onClick:()=>{
+      const ci=(document.getElementById('gci').value||'').trim();
+      const hd=(document.getElementById('ghd').value||'').trim().replace(/^@/,'');
+      if(!ci){toast('Paste the Client ID first');return}
+      gcfg.clientId=ci;gcfg.hd=hd;gcfgSave();gTokenClient=null;
+      closeModalPanel();signIn();
+    }},{label:'Cancel',onClick:closeModalPanel}]});
+}
+function renderAccount(){
+  const el=document.getElementById('gwrap');if(!el)return;
+  if(signedIn()&&gUser){
+    const em=gUser.email||'Signed in';
+    const init=(em[0]||'?').toUpperCase();
+    const av=gUser.picture?`<img src="${esc(gUser.picture)}" alt="" referrerpolicy="no-referrer">`:esc(init);
+    el.innerHTML=`<button class="btn ghost" onclick="openDriveBrowser()">Open</button>
+      <button class="btn primary" onclick="driveSave(false)">Save to Drive</button>
+      <button class="gchip" onclick="accountMenu()" title="${esc(em)}"><span class="em">${esc(em)}</span><span class="av">${av}</span></button>`;
+  }else{
+    el.innerHTML=`<button class="gsign" onclick="signIn()">
+      <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.3 13.2 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9.1h12.4c-.5 2.9-2.2 5.400-4.7 7.1l7.6 5.9c4.4-4.1 6.8-10.1 6.8-17.5z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.4-.8-2.9-.8-4.7s.3-3.3.8-4.7l-7.8-6.1C.9 16.3 0 20 0 24s.9 7.7 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.8 2.3-8.3 2.3-6.3 0-11.7-3.7-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
+      Sign in with Google</button>`;
+  }
+}
+function accountMenu(){
+  const em=(gUser&&gUser.email)||'';
+  const where=curFile.name?curFile.name.replace(/\.tcc\.json$/,''):'not saved to Drive yet';
+  showModalPanel({title:'Google account',
+    bodyHTML:`<p class="xnote">Signed in as <b>${esc(em)}</b>.<br>Current project: <b>${esc(where)}</b></p>
+      <p class="xnote">Projects are stored in a <b>${esc(FOLDER_NAME)}</b> folder in your own Google Drive. Only you can see them unless you share that folder in Drive.</p>`,
+    buttons:[{label:'Save a copy',onClick:()=>{closeModalPanel();driveSave(true)}},
+             {label:'Sign out',onClick:()=>{closeModalPanel();signOut()}},
+             {label:'Close',primary:true,onClick:closeModalPanel}]});
+}
+function setSaveState(t){const el=document.getElementById('saveState');if(el)el.textContent=t||''}
+function updateSaveState(){
+  if(!signedIn()){setSaveState('');return}
+  if(curFile.name)setSaveState((cloudDirty?'Unsaved changes · ':'Saved · ')+curFile.name.replace(/\.tcc\.json$/,''));
+  else setSaveState('Not saved to Drive');
+}
+function markCloudDirty(){if(signedIn()&&!cloudDirty){cloudDirty=true;updateSaveState()}}
+
 /* ================= In-app modal (sandbox-safe fallback for downloads/print) ================= */
 function isFramed(){try{return window.self!==window.top}catch(_){return true}}
 function closeModalPanel(){const o=document.getElementById('xoverlay');if(o)o.remove()}
@@ -1154,7 +1454,13 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 
 /* ================= Boot ================= */
 if(!load()){activeId=state.parcels[0].id}
+gcfgLoad();
 render();
+renderAccount();
+// Restore a previous Drive session silently (no popup) if this browser has one.
+if(cloudAvailable()&&gcfg.clientId){
+  loadGIS(err=>{if(!err){try{initTokenClient().requestAccessToken({prompt:''})}catch(_){}}});
+}
 </script>
 </body>
 </html>
