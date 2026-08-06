@@ -419,13 +419,53 @@ function centerOnBox(id){
 }
 
 /* ================= Persistence ================= */
-function save(){try{localStorage.setItem(STORE_KEY,JSON.stringify({state,activeId}))}catch(e){}
+/* Workspaces are scoped per signed-in person, so shared computers never show
+   one examiner's canvas to the next. Signed out = a separate "guest" workspace. */
+let ctxKey='::guest';
+function storeKey(){return STORE_KEY+ctxKey}
+function ctxFor(email){return '::'+String(email||'').toLowerCase().trim()}
+function save(){try{localStorage.setItem(storeKey(),JSON.stringify({state,activeId,curFile}))}catch(e){}
   if(typeof markCloudDirty==='function')markCloudDirty();}
-function load(){
-  try{const raw=localStorage.getItem(STORE_KEY);if(!raw)return false;
-    const o=JSON.parse(raw);if(o.state&&o.state.parcels){state=o.state;activeId=o.activeId||state.parcels[0].id;return true;}
+function loadRaw(raw){
+  try{const o=JSON.parse(raw);
+    if(o.state&&o.state.parcels){
+      state=o.state;activeId=o.activeId||state.parcels[0].id;
+      curFile=o.curFile&&o.curFile.id?o.curFile:{id:null,name:null};
+      return true;}
   }catch(e){}
   return false;
+}
+function load(){const raw=localStorage.getItem(storeKey());return raw?loadRaw(raw):false}
+// One-time move of work saved before workspaces became per-person.
+function migrateLegacyStore(){
+  try{const legacy=localStorage.getItem(STORE_KEY);
+    if(legacy&&!localStorage.getItem(STORE_KEY+'::guest')){
+      localStorage.setItem(STORE_KEY+'::guest',legacy);localStorage.removeItem(STORE_KEY);return true;}
+  }catch(_){}
+  return false;
+}
+function canvasHasWork(){return state.parcels.some(p=>p.boxes&&p.boxes.length)}
+function blankCanvas(){
+  state=blankState();activeId=state.parcels[0].id;selType=null;selId=null;
+  curFile={id:null,name:null};cloudDirty=false;
+}
+// Move into a person's own workspace after they sign in (or back to guest on sign-out).
+function adoptContext(want){
+  if(ctxKey===want)return;
+  save();                                  // flush current canvas under the old owner's key
+  const hadWork=canvasHasWork();
+  ctxKey=want;
+  const raw=localStorage.getItem(storeKey());
+  if(raw&&loadRaw(raw)){cloudDirty=false;render();updateSaveState();return}
+  if(hadWork){askKeepOrFresh();return}      // first sign-in with something on screen
+  blankCanvas();render();updateSaveState();
+}
+function askKeepOrFresh(){
+  showModalPanel({title:'Start fresh or keep this work?',
+    bodyHTML:`<p class="xnote">There's a project open that wasn't saved under your account.</p>
+      <p class="xnote">On a shared computer this is usually someone else's work — start fresh unless you know it's yours.</p>`,
+    buttons:[{label:'Start fresh',primary:true,onClick:()=>{closeModalPanel();blankCanvas();render();updateSaveState()}},
+             {label:'Keep it as mine',onClick:()=>{closeModalPanel();cloudDirty=true;render();updateSaveState();toast('Kept — use Save to Drive to store it')}}]});
 }
 
 /* ================= Coord helpers ================= */
@@ -1195,7 +1235,11 @@ function initTokenClient(){
     callback:r=>{
       if(r&&r.access_token){
         gTok=r.access_token;gTokExp=Date.now()+((+r.expires_in||3600)-120)*1000;
-        fetchUser().then(()=>{renderAccount();if(gPending){const f=gPending;gPending=null;f()}});
+        fetchUser().then(()=>{
+          if(gUser&&gUser.email)adoptContext(ctxFor(gUser.email));
+          renderAccount();updateSaveState();
+          if(gPending){const f=gPending;gPending=null;f()}
+        });
       }else{toast('Sign-in was cancelled')}
     },
     error_callback:e=>{toast('Sign-in failed'+(e&&e.type?': '+e.type:''))}
@@ -1222,11 +1266,25 @@ function ensureToken(then){
     try{initTokenClient().requestAccessToken({prompt:''})}catch(e){toast('Could not refresh sign-in')}
   });
 }
-function signOut(){
+function signOut(force){
+  if(!force&&cloudDirty&&canvasHasWork()){
+    showModalPanel({title:'Unsaved changes',
+      bodyHTML:`<p class="xnote">This project has changes that aren't in Drive yet.</p>
+        <p class="xnote">It stays on this computer under your account, but if others use this machine it's safer to save it to Drive now.</p>`,
+      buttons:[{label:'Save, then sign out',primary:true,onClick:()=>{closeModalPanel();driveSave(false,()=>signOut(true))}},
+               {label:'Sign out anyway',onClick:()=>{closeModalPanel();signOut(true)}},
+               {label:'Cancel',onClick:closeModalPanel}]});
+    return;
+  }
+  save();                                   // keep their work under their own key
   const t=gTok;
-  gTok=null;gTokExp=0;gUser=null;curFile={id:null,name:null};
+  gTok=null;gTokExp=0;gUser=null;
   try{if(t&&window.google&&google.accounts)google.accounts.oauth2.revoke(t,()=>{})}catch(_){}
-  renderAccount();updateSaveState();toast('Signed out');
+  ctxKey='::guest';                          // clear the screen for the next person
+  blankCanvas();
+  const raw=localStorage.getItem(storeKey());
+  if(raw)loadRaw(raw);
+  render();renderAccount();updateSaveState();toast('Signed out — workspace cleared');
 }
 function fetchUser(){
   return fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+gTok}})
@@ -1269,7 +1327,7 @@ function driveList(){
     '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&pageSize=100')
     .then(r=>r.json()).then(d=>d.files||[]);
 }
-function driveSave(asNew){
+function driveSave(asNew,then){
   ensureToken(()=>{
     const name=(state.project||'Untitled Search').replace(/[\\/:*?"<>|]/g,'-').trim()||'Untitled Search';
     const fname=name+'.tcc.json';
@@ -1286,7 +1344,8 @@ function driveSave(asNew){
           {method:'POST',headers:hdrs,
            body:build({name:fname,parents:[fid],mimeType:'application/json',appProperties:{[TAG_KEY]:'1'}})}));
     go.then(r=>r.json()).then(f=>{
-      curFile={id:f.id,name:f.name};cloudDirty=false;updateSaveState();toast('Saved to Drive');
+      curFile={id:f.id,name:f.name};cloudDirty=false;save();updateSaveState();toast('Saved to Drive');
+      if(then)then();
     }).catch(e=>{setSaveState('');showDriveError(e)});
   });
 }
@@ -1409,7 +1468,10 @@ function accountMenu(){
 }
 function setSaveState(t){const el=document.getElementById('saveState');if(el)el.textContent=t||''}
 function updateSaveState(){
-  if(!signedIn()){setSaveState('');return}
+  if(!signedIn()){
+    setSaveState(cloudAvailable()&&gcfg.clientId?'Not signed in · work stays on this computer':'');
+    return;
+  }
   if(curFile.name)setSaveState((cloudDirty?'Unsaved changes · ':'Saved · ')+curFile.name.replace(/\.tcc\.json$/,''));
   else setSaveState('Not saved to Drive');
 }
@@ -1453,10 +1515,12 @@ let tt=null;
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),1500)}
 
 /* ================= Boot ================= */
-if(!load()){activeId=state.parcels[0].id}
 gcfgLoad();
+migrateLegacyStore();
+if(!load()){activeId=state.parcels[0].id}
 render();
 renderAccount();
+updateSaveState();
 // Restore a previous Drive session silently (no popup) if this browser has one.
 if(cloudAvailable()&&gcfg.clientId){
   loadGIS(err=>{if(!err){try{initTokenClient().requestAccessToken({prompt:''})}catch(_){}}});
