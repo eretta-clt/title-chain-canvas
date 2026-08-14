@@ -48,6 +48,8 @@
   .tool:hover{background:#f2f5f9;border-color:#c6cfdb}
   .tool.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
   .tool.primary:hover{background:var(--accent-d)}
+  .tool:disabled{opacity:.35;cursor:default;background:#fff;border-color:var(--line)}
+  #btnUndo,#btnRedo{font-size:16px;line-height:1;padding:5px 10px;min-width:34px}
   .newkind{border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:#fff}
   .zoom{display:flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:8px;padding:2px 4px}
   .zoom button{border:none;background:none;font-size:15px;width:24px;color:#3a4658}
@@ -270,6 +272,8 @@
         <option value="note">Note</option>
       </select>
       <button class="tool primary" onclick="addBox()">+ Add box</button>
+      <button class="tool" id="btnUndo" onclick="undo()" title="Undo (Ctrl+Z)" aria-label="Undo">&#8630;</button>
+      <button class="tool" id="btnRedo" onclick="redo()" title="Redo (Ctrl+Y)" aria-label="Redo">&#8631;</button>
       <button class="tool" onclick="fitAll()">Fit</button>
       <div class="zoom">
         <button onclick="zoomBy(1/1.2)">−</button>
@@ -460,15 +464,15 @@ function adoptContext(want){
   const hadWork=canvasHasWork();
   ctxKey=want;
   const raw=localStorage.getItem(storeKey());
-  if(raw&&loadRaw(raw)){cloudDirty=false;render();updateSaveState();return}
+  if(raw&&loadRaw(raw)){cloudDirty=false;render();histReset();updateSaveState();return}
   if(hadWork){askKeepOrFresh();return}      // first sign-in with something on screen
-  blankCanvas();render();updateSaveState();
+  blankCanvas();render();histReset();updateSaveState();
 }
 function askKeepOrFresh(){
   showModalPanel({title:'Start fresh or keep this work?',
     bodyHTML:`<p class="xnote">There's a project open that wasn't saved under your account.</p>
       <p class="xnote">On a shared computer this is usually someone else's work — start fresh unless you know it's yours.</p>`,
-    buttons:[{label:'Start fresh',primary:true,onClick:()=>{closeModalPanel();blankCanvas();render();updateSaveState()}},
+    buttons:[{label:'Start fresh',primary:true,onClick:()=>{closeModalPanel();blankCanvas();render();histReset();updateSaveState()}},
              {label:'Keep it as mine',onClick:()=>{closeModalPanel();cloudDirty=true;render();updateSaveState();toast('Kept — use Save to Drive to store it')}}]});
 }
 
@@ -661,13 +665,13 @@ function renderInspector(){
       </div>`;
   }
 }
-function upd(field,val){const b=boxById(selId);if(!b)return;b[field]=val;renderBoxes();drawArrows();refreshStatLine();updatePill();save()}
-function setKind(k){const b=boxById(selId);if(!b)return;b.kind=k;renderBoxes();drawArrows();renderInspector();updatePill();save()}
-function updParcel(field,val){activeParcel()[field]=val;renderParcels();renderInspector();save()}
+function upd(field,val){const b=boxById(selId);if(!b)return;b[field]=val;renderBoxes();drawArrows();refreshStatLine();updatePill();save();commit('upd:'+selId+':'+field)}
+function setKind(k){const b=boxById(selId);if(!b)return;b.kind=k;renderBoxes();drawArrows();renderInspector();updatePill();save();commit()}
+function updParcel(field,val){const p=activeParcel();p[field]=val;renderParcels();renderInspector();save();commit('parcel:'+p.id+':'+field)}
 // interest-specific updates
-function togglePartial(c){const b=boxById(selId);if(!b)return;b.partial=c;if(c&&(!b.interest||b.interest==='1/1'))b.interest='1/2';renderBoxes();renderInspector();updatePill();save()}
-function updFrac(val){const b=boxById(selId);if(!b)return;b.interest=val;renderBoxes();refreshStatLine();updatePill();save()}
-function updInterest(field,val){const b=boxById(selId);if(!b)return;b[field]=val;renderBoxes();renderInspector();updatePill();save()}
+function togglePartial(c){const b=boxById(selId);if(!b)return;b.partial=c;if(c&&(!b.interest||b.interest==='1/1'))b.interest='1/2';renderBoxes();renderInspector();updatePill();save();commit()}
+function updFrac(val){const b=boxById(selId);if(!b)return;b.interest=val;renderBoxes();refreshStatLine();updatePill();save();commit('frac:'+selId)}
+function updInterest(field,val){const b=boxById(selId);if(!b)return;b[field]=val;renderBoxes();renderInspector();updatePill();save();commit()}
 function refreshStatLine(){const el=document.getElementById('istatLine');if(!el)return;const b=boxById(selId);if(!b)return;const st=interestStatus(b);el.className='istat '+statClass(st);el.innerHTML=statLine(st);}
 function interestCheckHTML(p){
   const owns=p.boxes.some(b=>interestStatus(b,p));
@@ -682,6 +686,51 @@ function interestCheckHTML(p){
   return`<div class="icheck bad"><h4>⚠ ${issues.length} interest gap${issues.length!==1?'s':''}</h4>${rows}</div>`;
 }
 
+/* ================= Undo / redo =================
+   Snapshot-based: each committed change stores the whole project. Typing in one
+   field collapses into a single step, and the camera (pan/zoom) is left alone so
+   undo never yanks the view out from under you. ---------------------------------- */
+const HIST_MAX=60;
+let hist=[],histIdx=-1,histLast={key:'',t:0},histLock=false;
+function histSnap(){return JSON.stringify({state,activeId})}
+function histReset(){hist=[histSnap()];histIdx=0;histLast={key:'',t:0};updateHistButtons()}
+function commit(key){
+  if(histLock)return;
+  const now=Date.now(),s=histSnap();
+  if(key&&key===histLast.key&&now-histLast.t<900&&histIdx>=0){
+    hist[histIdx]=s;histLast.t=now;updateHistButtons();return;   // coalesce a typing burst
+  }
+  histLast={key:key||'',t:now};
+  hist=hist.slice(0,histIdx+1);
+  hist.push(s);
+  if(hist.length>HIST_MAX)hist.shift();
+  histIdx=hist.length-1;
+  updateHistButtons();
+}
+function histApply(){
+  let o;try{o=JSON.parse(hist[histIdx])}catch(_){return}
+  const views={};state.parcels.forEach(p=>views[p.id]=p.view);
+  state=o.state;
+  state.parcels.forEach(p=>{if(views[p.id])p.view=views[p.id]});
+  activeId=state.parcels.some(p=>p.id===o.activeId)?o.activeId:state.parcels[0].id;
+  // stay on whatever was selected if it still exists, so undoing a text edit
+  // doesn't close the inspector out from under you
+  const kType=selType,kId=selId;const ap=activeParcel();
+  selType=null;selId=null;
+  if(kType==='box'&&ap.boxes.some(b=>b.id===kId)){selType='box';selId=kId}
+  else if(kType==='arrow'&&ap.arrows.some(a=>a.id===kId)){selType='arrow';selId=kId}
+  histLast={key:'',t:0};
+  histLock=true;render();histLock=false;
+  updateHistButtons();
+}
+function undo(){if(histIdx>0){histIdx--;histApply();toast('Undo')}else{toast('Nothing to undo')}}
+function redo(){if(histIdx<hist.length-1){histIdx++;histApply();toast('Redo')}else{toast('Nothing to redo')}}
+function updateHistButtons(){
+  const u=document.getElementById('btnUndo'),r=document.getElementById('btnRedo');
+  if(u)u.disabled=histIdx<=0;
+  if(r)r.disabled=histIdx>=hist.length-1;
+}
+
 /* ================= Mutations ================= */
 function addBox(){
   const r=canvas.getBoundingClientRect(),v=view();
@@ -691,7 +740,7 @@ function addBox(){
     x:Math.round(cx-111)+jitter(),y:Math.round(cy-45)+jitter(),
     grantor:'',grantee:'',idate:'',rdate:'',docnum:'',bookpage:'',notes:'',partial:false,interest:'1/1',origin:false};
   activeParcel().boxes.push(b);
-  render();select('box',b.id);
+  render();select('box',b.id);commit();
   document.getElementById('hintEmpty').style.display='none';
   setTimeout(()=>{const f=document.getElementById('f_grantor');if(f)f.focus()},30);
 }
@@ -699,26 +748,26 @@ function deleteBox(id){
   const p=activeParcel();
   p.boxes=p.boxes.filter(b=>b.id!==id);
   p.arrows=p.arrows.filter(a=>a.from!==id&&a.to!==id);
-  selType=null;selId=null;render();toast('Box deleted');
+  selType=null;selId=null;render();commit();toast('Box deleted');
 }
 function addArrow(from,to){
   const p=activeParcel();
   if(p.arrows.some(a=>a.from===from&&a.to===to)){toast('Link already exists');return;}
-  const a={id:uid(),from,to};p.arrows.push(a);renderBoxes();drawArrows();updatePill();save();
+  const a={id:uid(),from,to};p.arrows.push(a);renderBoxes();drawArrows();updatePill();save();commit();
 }
-function deleteArrow(id){const p=activeParcel();p.arrows=p.arrows.filter(a=>a.id!==id);selType=null;selId=null;renderBoxes();drawArrows();renderInspector();updatePill();save();toast('Link deleted')}
-function flipArrow(id){const a=activeParcel().arrows.find(x=>x.id===id);if(!a)return;[a.from,a.to]=[a.to,a.from];renderBoxes();drawArrows();renderInspector();updatePill();save()}
+function deleteArrow(id){const p=activeParcel();p.arrows=p.arrows.filter(a=>a.id!==id);selType=null;selId=null;renderBoxes();drawArrows();renderInspector();updatePill();save();commit();toast('Link deleted')}
+function flipArrow(id){const a=activeParcel().arrows.find(x=>x.id===id);if(!a)return;[a.from,a.to]=[a.to,a.from];renderBoxes();drawArrows();renderInspector();updatePill();save();commit()}
 
 /* ================= Parcels ================= */
 function selectParcel(id){activeId=id;selType=null;selId=null;render()}
 function addParcel(){
   const p=newParcel('Parcel '+(state.parcels.length+1));
   p.color=PARCEL_COLORS[state.parcels.length%PARCEL_COLORS.length];
-  state.parcels.push(p);activeId=p.id;selType=null;selId=null;render();
+  state.parcels.push(p);activeId=p.id;selType=null;selId=null;render();commit();
 }
 function renameParcel(id){
   const p=state.parcels.find(x=>x.id===id);if(!p)return;
-  const n=prompt('Parcel name:',p.name);if(n!=null){p.name=n.trim()||p.name;render()}
+  const n=prompt('Parcel name:',p.name);if(n!=null){p.name=n.trim()||p.name;render();commit()}
 }
 function deleteParcel(id){
   if(state.parcels.length<=1)return;
@@ -726,9 +775,9 @@ function deleteParcel(id){
   if(!confirm(`Delete "${p.name}" and everything on it?`))return;
   state.parcels=state.parcels.filter(x=>x.id!==id);
   if(activeId===id)activeId=state.parcels[0].id;
-  selType=null;selId=null;render();
+  selType=null;selId=null;render();commit();
 }
-function setProj(v){state.project=v;clearTimeout(setProj._t);setProj._t=setTimeout(save,300)}
+function setProj(v){state.project=v;clearTimeout(setProj._t);setProj._t=setTimeout(()=>{save();commit('proj')},300)}
 
 /* ================= View: zoom / fit ================= */
 function zoomBy(f){
@@ -827,7 +876,7 @@ function endPointer(e){
   if(pinch&&pointers.size<2){pinch=null;if(pointers.size===1)return;} // wait until all lifted
   if(pointers.size>0)return;
   if(!drag){canvas.classList.remove('panning');document.body.style.userSelect='';return;}
-  if(drag.mode==='box'){if(drag.moved)save();}
+  if(drag.mode==='box'){if(drag.moved){save();commit();}}
   else if(drag.mode==='arrow'){
     const el=document.elementFromPoint(e.clientX,e.clientY);
     const tgt=el&&el.closest('.box');
@@ -853,6 +902,13 @@ canvas.addEventListener('wheel',e=>{
   clearTimeout(canvas._z);canvas._z=setTimeout(save,250);
 },{passive:false});
 document.addEventListener('keydown',e=>{
+  // Undo/redo work everywhere — field edits are in our history too, so this stays
+  // consistent whether or not the cursor happens to be in the inspector.
+  if((e.ctrlKey||e.metaKey)&&!e.altKey){
+    const k=e.key.toLowerCase();
+    if(k==='z'&&!e.shiftKey){e.preventDefault();if(document.activeElement)document.activeElement.blur();undo();return}
+    if(k==='y'||(k==='z'&&e.shiftKey)){e.preventDefault();if(document.activeElement)document.activeElement.blur();redo();return}
+  }
   if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))return;
   if((e.key==='Delete'||e.key==='Backspace')&&selType){
     e.preventDefault();
@@ -881,7 +937,7 @@ function importJSON(){
   inp.onchange=()=>{const f=inp.files[0];if(!f)return;const r=new FileReader();
     r.onload=()=>{try{const o=JSON.parse(r.result);
       if(o.parcels){state=o;}else if(o.state){state=o.state;}
-      activeId=state.parcels[0].id;selType=null;selId=null;render();toast('Imported');
+      activeId=state.parcels[0].id;selType=null;selId=null;render();histReset();toast('Imported');
     }catch(err){alert('Could not read that file.')}};
     r.readAsText(f);};
   inp.click();
@@ -890,7 +946,7 @@ function newProject(){
   if(!confirm('Start a new blank project? Export first to keep the current one.'))return;
   state=blankState();activeId=state.parcels[0].id;selType=null;selId=null;
   curFile={id:null,name:null};cloudDirty=false;
-  render();updateSaveState();toast('New project');
+  render();histReset();updateSaveState();toast('New project');
 }
 
 /* ================= Sample ================= */
@@ -911,7 +967,7 @@ function loadSample(){
   const c1=mk({kind:'deed',x:300,y:80,grantor:'Riverbend Holdings, LLC',grantee:'(same project – adjoining lot)',rdate:'04/12/2019',docnum:'2019-003626',notes:'Same deed, second parcel'});
   p2.boxes=[c1];
   state.parcels=[p1,p2];activeId=p1.id;selType=null;selId=null;
-  render();toast('Sample loaded');
+  render();histReset();toast('Sample loaded');
 }
 
 /* ================= Diagram export (high-res image / PDF, no print dialog) ================= */
@@ -1290,7 +1346,7 @@ function signOut(force){
   blankCanvas();
   const raw=localStorage.getItem(storeKey());
   if(raw)loadRaw(raw);
-  render();renderAccount();updateSaveState();toast('Signed out — workspace cleared');
+  render();histReset();renderAccount();updateSaveState();toast('Signed out — workspace cleared');
 }
 function fetchUser(){
   return fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+gTok}})
@@ -1363,7 +1419,7 @@ function driveOpen(id,name){
       if(!obj)throw new Error('That file is not a Title Chain project.');
       state=obj;activeId=state.parcels[0].id;selType=null;selId=null;
       curFile={id,name};cloudDirty=false;
-      closeModalPanel();render();updateSaveState();toast('Opened from Drive');
+      closeModalPanel();render();histReset();updateSaveState();toast('Opened from Drive');
     }).catch(e=>{setSaveState('');showDriveError(e)});
   });
 }
@@ -1525,6 +1581,7 @@ gcfgLoad();
 migrateLegacyStore();
 if(!load()){activeId=state.parcels[0].id}
 render();
+histReset();
 renderAccount();
 updateSaveState();
 // Restore a previous Drive session silently (no popup) if this browser has one.
