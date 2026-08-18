@@ -249,6 +249,7 @@
       <button class="btn ghost" onclick="importJSON()">Import</button>
       <button class="btn ghost" onclick="exportJSON()">Export</button>
       <button class="btn" onclick="openSaveDialog()">Save PDF / Image</button>
+      <button class="btn ghost" onclick="openPrintDialog()">Print</button>
       <button class="btn ghost" onclick="newProject()">New</button>
     </div>
     <div class="gwrap" id="gwrap"></div>
@@ -1197,6 +1198,107 @@ function buildPDFBlob(imgs){
   return new Blob([out],{type:'application/pdf'});
 }
 /* ---- public export actions ---- */
+/* ---- Print to paper (or Save as PDF from the print dialog) ----
+   The full-size PDF above is for viewing. This lays the chain onto real sheets:
+   either scaled to fit one page, or at readable size tiled across several. */
+const PAPER={letter:{w:8.5,h:11,label:'Letter'},legal:{w:8.5,h:14,label:'Legal'},
+             tabloid:{w:11,h:17,label:'Tabloid 11×17'},a4:{w:8.27,h:11.69,label:'A4'}};
+const PRINT_MARGIN=0.4;               // inches
+function openPrintDialog(){
+  const p=activeParcel();
+  const cv=renderParcelCanvas(p,EXPORT_SCALE);
+  const dw=cv.width/EXPORT_SCALE, dh=cv.height/EXPORT_SCALE;
+  const est=(size,land)=>{
+    const pg=PAPER[size], W=(land?pg.h:pg.w)-PRINT_MARGIN*2, H=(land?pg.w:pg.h)-PRINT_MARGIN*2;
+    const cols=Math.ceil(dw/(W*96)), rows=Math.ceil(dh/(H*96));
+    return cols*rows*state.parcels.length;
+  };
+  showModalPanel({title:'Print',
+    bodyHTML:`<p class="xnote">Sends the chain to your printer. In the print dialog you can choose a printer, or pick <b>Save as PDF</b> for a paper-sized file.</p>
+      <div class="two">
+        <div class="fld"><label>Paper</label><select id="pp_size">${
+          Object.keys(PAPER).map(k=>`<option value="${k}"${k==='letter'?' selected':''}>${PAPER[k].label}</option>`).join('')}</select></div>
+        <div class="fld"><label>Orientation</label><select id="pp_orient">
+          <option value="landscape" selected>Landscape</option><option value="portrait">Portrait</option></select></div>
+      </div>
+      <div class="fld" style="margin-top:10px"><label>Size</label><select id="pp_mode">
+        <option value="fit" selected>Fit each parcel to one page</option>
+        <option value="tile">Full size — continue across pages</option></select></div>
+      <p class="xnote" id="pp_est" style="margin-top:10px"></p>
+      <label class="chk"><input type="checkbox" id="pp_all"> Print every parcel (otherwise just this one)</label>`,
+    buttons:[{label:'Print',primary:true,onClick:doPrint},{label:'Cancel',onClick:closeModalPanel}],
+    onShow:()=>{
+      const upd=()=>{
+        const m=document.getElementById('pp_mode').value;
+        const n=m==='fit'?(document.getElementById('pp_all').checked?state.parcels.length:1)
+                         :est(document.getElementById('pp_size').value,document.getElementById('pp_orient').value==='landscape');
+        document.getElementById('pp_est').innerHTML=m==='fit'
+          ? `Everything shrinks onto <b>${document.getElementById('pp_all').checked?state.parcels.length:1}</b> sheet(s). Best for a quick reference copy.`
+          : `About <b>${n}</b> sheet(s) at full readability — tape them together for a wall copy.`;
+      };
+      ['pp_size','pp_orient','pp_mode','pp_all'].forEach(id=>document.getElementById(id).addEventListener('change',upd));
+      upd();
+    }});
+}
+function doPrint(){
+  const size=document.getElementById('pp_size').value;
+  const land=document.getElementById('pp_orient').value==='landscape';
+  const mode=document.getElementById('pp_mode').value;
+  const all=document.getElementById('pp_all').checked;
+  closeModalPanel();
+  const pg=PAPER[size];
+  const pw=land?pg.h:pg.w, ph=land?pg.w:pg.h;
+  const availW=(pw-PRINT_MARGIN*2)*96, availH=(ph-PRINT_MARGIN*2)*96;   // CSS px
+  const parcels=all?state.parcels:[activeParcel()];
+  const sheets=[];
+  parcels.forEach(p=>{
+    const cv=renderParcelCanvas(p,EXPORT_SCALE);
+    const url=cv.toDataURL('image/jpeg',0.94);
+    const dw=cv.width/EXPORT_SCALE, dh=cv.height/EXPORT_SCALE;
+    if(mode==='fit'){
+      const s=Math.min(availW/dw,availH/dh,1);
+      sheets.push({url,iw:dw*s,ih:dh*s,ox:0,oy:0,label:esc(p.name)});
+    }else{
+      const cols=Math.max(1,Math.ceil(dw/availW)), rows=Math.max(1,Math.ceil(dh/availH));
+      for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)
+        sheets.push({url,iw:dw,ih:dh,ox:-c*availW,oy:-r*availH,
+          label:esc(p.name)+(cols*rows>1?` &mdash; row ${r+1} of ${rows}, col ${c+1} of ${cols}`:'')});
+    }
+  });
+  if(!sheets.length){toast('Nothing to print');return}
+  let w=null;try{w=window.open('','_blank')}catch(_){}
+  if(!w||!w.document){showPrintBlocked();return}
+  const proj=esc(state.project||'Title Chain');
+  const body=sheets.map((s,i)=>`<div class="sheet">
+      <div class="clip"><img src="${s.url}" style="width:${s.iw}px;height:${s.ih}px;left:${s.ox}px;top:${s.oy}px"></div>
+      <div class="foot"><span>${proj} &mdash; ${s.label}</span><span>${i+1} / ${sheets.length}</span></div>
+    </div>`).join('');
+  const doc=w.document;doc.open();
+  doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>${proj}</title><style>
+    @page{size:${size==='a4'?'A4':size} ${land?'landscape':'portrait'};margin:${PRINT_MARGIN}in}
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:#666}
+    .sheet{position:relative;width:${availW}px;height:${availH}px;overflow:hidden;background:#fff;
+      margin:0 auto 16px;box-shadow:0 2px 10px rgba(0,0,0,.4);break-after:page;page-break-after:always}
+    .sheet:last-child{break-after:auto;page-break-after:auto}
+    .clip{position:absolute;inset:0;overflow:hidden}
+    .clip img{position:absolute;image-rendering:auto}
+    .foot{position:absolute;left:0;right:0;bottom:2px;display:flex;justify-content:space-between;
+      font:10px -apple-system,Segoe UI,Roboto,sans-serif;color:#8a93a0;padding:0 2px}
+    @media print{html,body{background:#fff}.sheet{margin:0;box-shadow:none}}
+  </style></head><body>${body}</body></html>`);
+  doc.close();
+  const go=()=>setTimeout(()=>{try{w.focus();w.print()}catch(_){}} ,350);
+  if(doc.readyState==='complete')go();else w.onload=go;
+  toast(sheets.length+' sheet'+(sheets.length!==1?'s':'')+' ready');
+}
+function showPrintBlocked(){
+  showModalPanel({title:'Allow pop-ups to print',
+    bodyHTML:`<p class="xnote">The print view opens in a new tab, and your browser blocked it.</p>
+      <div class="gwarn">Click the blocked pop-up icon in the address bar, choose <b>Always allow</b> for this site, then press Print again.</div>`,
+    buttons:[{label:'OK',primary:true,onClick:closeModalPanel}]});
+}
+
 function exportImage(kind){           // 'jpg' | 'png' — current parcel
   const p=activeParcel();
   const cv=renderParcelCanvas(p);
@@ -1236,6 +1338,7 @@ function openSaveDialog(){
     bodyHTML:`<p class="xnote">Saves the chain at <b>full size</b> in high resolution &mdash; long chains are not shrunk to fit a page.<br>
       Current parcel renders at <b>${cv.width}&times;${cv.height}px</b>.</p>
       <div class="savegrid">
+        <button class="savebtn" onclick="openPrintDialog()"><b>Print / paper PDF</b><span>Real sheets &mdash; fit to a page, or full size across several</span></button>
         <button class="savebtn" onclick="exportPDF()"><b>PDF</b><span>All parcels &mdash; one page each</span></button>
         <button class="savebtn" onclick="exportImage('jpg')"><b>JPG</b><span>This parcel &mdash; high-res image</span></button>
         <button class="savebtn" onclick="exportImage('png')"><b>PNG</b><span>This parcel &mdash; sharpest text</span></button>
