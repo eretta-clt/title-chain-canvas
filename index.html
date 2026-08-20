@@ -102,6 +102,25 @@
     .proj-name{min-width:130px}
   }
 
+  /* three-dot actions on the box itself */
+  .box .bmenu{position:absolute;top:5px;right:5px;width:24px;height:22px;border:none;border-radius:6px;
+    background:rgba(255,255,255,.9);color:#9aa6b6;font-size:15px;line-height:1;padding:0;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .1s}
+  .box:hover .bmenu,.box.sel .bmenu{opacity:1}
+  .box .bmenu:hover{background:#eef2f7;color:#33445c}
+  @media (hover:none),(pointer:coarse){.box .bmenu{opacity:1;width:30px;height:27px;font-size:17px}}
+  .bmenu-pop{position:fixed;z-index:250;background:#fff;border:1px solid var(--line);border-radius:9px;
+    box-shadow:0 8px 26px rgba(20,30,50,.20);padding:5px;min-width:150px;display:flex;flex-direction:column;gap:2px}
+  .bmenu-pop button{border:none;background:none;text-align:left;padding:8px 10px;border-radius:6px;
+    font-size:13px;font-weight:600;color:#33445c;cursor:pointer;display:flex;align-items:center;gap:8px}
+  .bmenu-pop button:hover{background:#f2f5f9}
+  .bmenu-pop button.danger{color:#b02a37}
+  .bmenu-pop button.danger:hover{background:#fdeced}
+  .bmenu-pop .mi{width:16px;text-align:center;opacity:.75}
+  .dup-btn{width:100%;border:1px solid var(--line);background:#fff;color:#33445c;border-radius:8px;
+    padding:8px;font-weight:650;cursor:pointer}
+  .dup-btn:hover{background:#f2f5f9;border-color:#c6cfdb}
+
   .hint-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
   .hint-empty .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 26px;box-shadow:var(--shadow);text-align:center;color:var(--muted);max-width:340px}
   .hint-empty .card b{color:var(--ink)}
@@ -552,7 +571,8 @@ function boxInner(b,parcel){
   const metaOut = b.kind==='note'?'':meta;
   const intBadge=(b.partial&&FRACTIONAL.has(b.kind))?`<span class="ibadge">${esc(fracStr(interestOf(b)))} interest</span>`:'';
   const chip=statChip(interestStatus(b,parcel));
-  return `<span class="kind" style="background:${k.bg};color:${k.c}">${k.label}</span>${intBadge}
+  return `<button class="bmenu" title="Duplicate or delete" aria-label="Box actions">&#8943;</button>
+    <span class="kind" style="background:${k.bg};color:${k.c}">${k.label}</span>${intBadge}
     ${partyBlock}${metaOut}${chip}
     <div class="handle" title="Drag to the deed this one conveys into"></div>`;
 }
@@ -635,6 +655,7 @@ function renderInspector(){
         :`<div class="istat none">Noted for reference. A ${esc(KINDS[b.kind].label.toLowerCase())} conveys no fee title, so this fraction is left out of the chain's interest check.</div>`}
       </div>`:''}
       <div class="fld"><label>Notes</label><textarea rows="2" oninput="upd('notes',this.value)">${esc(b.notes)}</textarea></div>
+      <div class="del-row"><button class="dup-btn" onclick="duplicateBox('${b.id}')">Duplicate box</button></div>
       <div class="del-row"><button class="del-btn" onclick="deleteBox('${b.id}')">Delete box</button></div>`;
   }else if(selType==='arrow'){
     const a=p.arrows.find(x=>x.id===selId);if(!a){clearSelection();return;}
@@ -686,6 +707,35 @@ function interestCheckHTML(p){
   }).join('');
   return`<div class="icheck bad"><h4>⚠ ${issues.length} interest gap${issues.length!==1?'s':''}</h4>${rows}</div>`;
 }
+
+/* ================= Box actions menu (⋯ on the box) ================= */
+function closeBoxMenu(){const m=document.getElementById('bmenuPop');if(m)m.remove()}
+function boxMenuOpenFor(){const m=document.getElementById('bmenuPop');return m?m.dataset.for:null}
+// `r` is a rect captured BEFORE any re-render — selecting the box replaces its
+// DOM node, so anchoring to the live element would measure a detached one.
+function openBoxMenu(id,r){
+  closeBoxMenu();
+  const m=document.createElement('div');
+  m.className='bmenu-pop';m.id='bmenuPop';m.dataset.for=id;
+  m.innerHTML=`<button data-act="dup"><span class="mi">&#10697;</span>Duplicate</button>
+    <button data-act="del" class="danger"><span class="mi">&times;</span>Delete</button>`;
+  document.body.appendChild(m);
+  let x=r.right-m.offsetWidth, y=r.bottom+6;
+  if(y+m.offsetHeight>window.innerHeight-8)y=Math.max(8,r.top-m.offsetHeight-6);
+  if(x<8)x=8;
+  if(x+m.offsetWidth>window.innerWidth-8)x=window.innerWidth-8-m.offsetWidth;
+  m.style.left=x+'px';m.style.top=y+'px';
+  m.addEventListener('pointerdown',e=>e.stopPropagation());
+  m.addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b)return;
+    const act=b.dataset.act;closeBoxMenu();
+    if(act==='dup')duplicateBox(id);
+    else if(act==='del')deleteBox(id);
+  });
+}
+document.addEventListener('pointerdown',e=>{
+  if(document.getElementById('bmenuPop')&&!e.target.closest('#bmenuPop')&&!e.target.closest('.bmenu'))closeBoxMenu();
+},true);
 
 /* ================= Undo / redo =================
    Snapshot-based: each committed change stores the whole project. Typing in one
@@ -744,6 +794,18 @@ function addBox(){
   render();select('box',b.id);commit();
   document.getElementById('hintEmpty').style.display='none';
   setTimeout(()=>{const f=document.getElementById('f_grantor');if(f)f.focus()},30);
+}
+// Copy a box's contents to a new box. Arrows are intentionally NOT copied — the
+// duplicate is a fresh instrument that still needs its own place in the chain.
+function duplicateBox(id){
+  const p=activeParcel();
+  const src=p.boxes.find(b=>b.id===id);
+  if(!src)return;
+  const copy=Object.assign({},src,{id:uid(),x:src.x+30,y:src.y+30});
+  p.boxes.push(copy);
+  render();select('box',copy.id);commit();
+  toast('Duplicated');
+  setTimeout(()=>{const f=document.getElementById('f_grantor');if(f){f.focus();f.select()}},40);
 }
 function deleteBox(id){
   const p=activeParcel();
@@ -807,6 +869,7 @@ const pointers=new Map();   // active pointers: id -> {x,y}
 let pinch=null;             // two-finger zoom/pan session
 canvas.addEventListener('pointerdown',e=>{
   if(e.pointerType==='mouse'&&e.button!==0)return;
+  if(e.pointerType==='mouse')pointers.clear();   // guard against a missed pointerup
   pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   try{canvas.setPointerCapture(e.pointerId)}catch(_){}
   if(pointers.size===2){          // second finger down → pinch/pan, abandon any single drag
@@ -818,6 +881,19 @@ canvas.addEventListener('pointerdown',e=>{
   const handle=e.target.closest('.handle');
   const bx=e.target.closest('.box');
   const arrow=e.target.closest('[data-arrow]');
+  const mbtn=e.target.closest('.bmenu');
+  if(mbtn&&bx){                    // ⋯ toggles its menu and must never start a drag
+    e.preventDefault();e.stopPropagation();
+    const already=boxMenuOpenFor()===bx.dataset.id;
+    closeBoxMenu();
+    if(!already){
+      const r=mbtn.getBoundingClientRect();   // capture before the re-render below
+      select('box',bx.dataset.id);
+      openBoxMenu(bx.dataset.id,r);
+    }
+    return;
+  }
+  closeBoxMenu();
   if(handle&&bx){startArrow(bx.dataset.id,e);return;}
   if(bx){startBoxDrag(bx,e);return;}
   if(arrow){select('arrow',arrow.dataset.arrow);e.preventDefault();return;}
@@ -893,7 +969,7 @@ window.addEventListener('pointercancel',e=>{
   document.body.style.userSelect='';canvas.classList.remove('panning');
 });
 canvas.addEventListener('wheel',e=>{
-  e.preventDefault();
+  e.preventDefault();closeBoxMenu();
   const v=view(),r=canvas.getBoundingClientRect();
   const mx=e.clientX-r.left,my=e.clientY-r.top;
   const wx=(mx-v.panX)/v.zoom,wy=(my-v.panY)/v.zoom;
@@ -915,7 +991,8 @@ document.addEventListener('keydown',e=>{
     e.preventDefault();
     if(selType==='box')deleteBox(selId);else if(selType==='arrow')deleteArrow(selId);
   }
-  if(e.key==='Escape'){if(drag&&drag.mode==='arrow'){drag=null;drawArrows()}clearSelection()}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='d'&&selType==='box'){e.preventDefault();duplicateBox(selId);return}
+  if(e.key==='Escape'){closeBoxMenu();if(drag&&drag.mode==='arrow'){drag=null;drawArrows()}clearSelection()}
 });
 
 /* ================= File ops ================= */
