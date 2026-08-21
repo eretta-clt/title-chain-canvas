@@ -121,6 +121,38 @@
     padding:8px;font-weight:650;cursor:pointer}
   .dup-btn:hover{background:#f2f5f9;border-color:#c6cfdb}
 
+  /* ---- Projects page ---- */
+  .projpage{position:fixed;inset:0;z-index:300;background:var(--bg);display:flex;flex-direction:column}
+  .projbar{display:flex;align-items:center;gap:12px;padding:12px 18px;background:linear-gradient(180deg,#22344b,#1a2739);
+    color:#eaf0f8;box-shadow:0 2px 10px rgba(0,0,0,.18);flex-wrap:wrap}
+  .projttl{font-size:16px;font-weight:650;white-space:nowrap}
+  .projsearch{flex:1;min-width:160px;background:rgba(255,255,255,.08);border:1px solid #3a4d68;color:#eaf0f8;
+    border-radius:8px;padding:7px 11px;font-size:13px}
+  .projsearch::placeholder{color:#8ea3bd}
+  .projsearch:focus{outline:none;border-color:#7fb3ec;background:rgba(255,255,255,.14)}
+  .projbody{flex:1;overflow:auto;padding:18px}
+  .projgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;max-width:1300px;margin:0 auto}
+  .projcard{background:#fff;border:1px solid var(--line);border-radius:11px;padding:14px 15px;box-shadow:var(--shadow);
+    cursor:pointer;display:flex;flex-direction:column;gap:5px;transition:border-color .1s,box-shadow .1s}
+  .projcard:hover{border-color:#bcd6f4;box-shadow:0 4px 16px rgba(20,30,50,.12)}
+  .projcard.cur{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),var(--shadow)}
+  .pc-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .pc-name{font-size:14.5px;font-weight:650;color:var(--ink);word-break:break-word;line-height:1.3}
+  .pc-cur{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--accent-d);
+    background:#e8f0fb;border:1px solid #cfe0f6;border-radius:20px;padding:2px 7px;white-space:nowrap;flex-shrink:0}
+  .pc-meta{font-size:12px;color:var(--muted)}
+  .pc-when{font-size:11.5px;color:#93a0b2}
+  .pc-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
+  .pc-tags span{font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px}
+  .tagd{background:#e7f6ec;color:#1c7a43;border:1px solid #a9dcbc}
+  .tagl{background:#eef1f6;color:#5b6a7d;border:1px solid #dde3ec}
+  .pc-acts{display:flex;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid #eef1f6;flex-wrap:wrap}
+  .pc-btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:5px 10px;font-size:12px;
+    font-weight:600;color:#40506a;cursor:pointer}
+  .pc-btn:hover{background:#f2f5f9;border-color:#c6cfdb}
+  .pc-btn.danger:hover{background:#fdeced;border-color:#f2b8bd;color:#b02a37}
+  .projempty{text-align:center;color:var(--muted);padding:70px 20px;font-size:14px;line-height:1.7}
+
   .hint-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
   .hint-empty .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 26px;box-shadow:var(--shadow);text-align:center;color:var(--muted);max-width:340px}
   .hint-empty .card b{color:var(--ink)}
@@ -271,6 +303,7 @@
     <span class="savestate" id="saveState"></span>
     <span class="spacer"></span>
     <div class="tbtns">
+      <button class="btn" onclick="openProjectsPage()">Projects</button>
       <button class="btn ghost" onclick="loadSample()">Sample</button>
       <button class="btn ghost" onclick="importJSON()">Import</button>
       <button class="btn ghost" onclick="exportJSON()">Export</button>
@@ -360,7 +393,7 @@ let zTop=10;
 
 function blankState(){
   const p=newParcel('Parcel 1');
-  const s={project:'Untitled Search', parcels:[p]};
+  const s={id:uid(), project:'Untitled Search', parcels:[p]};
   return s;
 }
 function newParcel(name){
@@ -470,7 +503,8 @@ let ctxKey='::guest';
 function storeKey(){return STORE_KEY+ctxKey}
 function ctxFor(email){return '::'+String(email||'').toLowerCase().trim()}
 function save(){try{localStorage.setItem(storeKey(),JSON.stringify({state,activeId,curFile}))}catch(e){}
-  if(typeof markCloudDirty==='function')markCloudDirty();}
+  if(typeof markCloudDirty==='function')markCloudDirty();
+  if(typeof libTouch==='function')libTouch();}
 function loadRaw(raw){
   try{const o=JSON.parse(raw);
     if(o.state&&o.state.parcels){
@@ -725,6 +759,173 @@ function interestCheckHTML(p){
     return `<button class="iissue" onclick="select('box','${b.id}');centerOnBox('${b.id}')"><span class="who">${esc(nm(b))}</span> — ${msg}</button>`;
   }).join('');
   return`<div class="icheck bad"><h4>⚠ ${issues.length} interest gap${issues.length!==1?'s':''}</h4>${rows}</div>`;
+}
+
+/* ================= Project library =================
+   Every project you touch is kept here, per workspace, so the Projects page is
+   useful with or without Drive. Drive stays the source of truth once connected —
+   these entries carry the Drive id so the two line up. --------------------------- */
+const LIB_KEY='titleCanvas.lib';
+function libKey(){return LIB_KEY+ctxKey}
+function libLoad(){try{return JSON.parse(localStorage.getItem(libKey())||'{}')||{}}catch(_){return{}}}
+function libWrite(lib){
+  try{localStorage.setItem(libKey(),JSON.stringify(lib));return true}
+  catch(_){                        // out of space — drop the oldest until it fits
+    const ids=Object.keys(lib).sort((a,b)=>(lib[a].updated||0)-(lib[b].updated||0));
+    while(ids.length>1){
+      delete lib[ids.shift()];
+      try{localStorage.setItem(libKey(),JSON.stringify(lib));return true}catch(__){}
+    }
+    return false;
+  }
+}
+function libStats(s){
+  let boxes=0;(s.parcels||[]).forEach(p=>{boxes+=(p.boxes||[]).length});
+  return{parcels:(s.parcels||[]).length,boxes};
+}
+let libTimer=null;
+function libTouch(){                // debounced: save() runs on every render
+  clearTimeout(libTimer);
+  libTimer=setTimeout(()=>{
+    if(!state.id)state.id=uid();
+    const st=libStats(state);
+    if(!st.boxes&&(state.project||'')==='Untitled Search')return;   // ignore empty scratch
+    const lib=libLoad();
+    lib[state.id]={name:state.project||'Untitled Search',updated:Date.now(),
+      parcels:st.parcels,boxes:st.boxes,driveId:curFile.id||null,data:JSON.stringify(state)};
+    libWrite(lib);
+  },900);
+}
+function libFlush(){clearTimeout(libTimer);libTimer=null;
+  if(!state.id)state.id=uid();
+  const st=libStats(state);
+  if(!st.boxes&&(state.project||'')==='Untitled Search')return;
+  const lib=libLoad();
+  lib[state.id]={name:state.project||'Untitled Search',updated:Date.now(),
+    parcels:st.parcels,boxes:st.boxes,driveId:curFile.id||null,data:JSON.stringify(state)};
+  libWrite(lib);
+}
+function relTime(ms){
+  if(!ms)return'';
+  const d=Date.now()-ms,m=Math.round(d/60000);
+  if(m<1)return'just now';
+  if(m<60)return m+' min ago';
+  const h=Math.round(m/60);if(h<24)return h+(h===1?' hour ago':' hours ago');
+  const dy=Math.round(h/24);if(dy<7)return dy+(dy===1?' day ago':' days ago');
+  return new Date(ms).toLocaleDateString();
+}
+
+/* ---- the Projects page ---- */
+let projFilter='';
+function openProjectsPage(){
+  libFlush();
+  closeProjectsPage();
+  const wrap=document.createElement('div');
+  wrap.className='projpage';wrap.id='projPage';
+  wrap.innerHTML=`<div class="projbar">
+      <div class="projttl">Projects</div>
+      <input class="projsearch" id="projSearch" placeholder="Search projects…" value="${esc(projFilter)}">
+      <button class="btn primary" onclick="newLibProject()">+ New project</button>
+      <button class="btn ghost" onclick="closeProjectsPage()">Close</button>
+    </div>
+    <div class="projbody" id="projBody"></div>`;
+  document.body.appendChild(wrap);
+  const s=document.getElementById('projSearch');
+  s.addEventListener('input',()=>{projFilter=s.value;renderProjects()});
+  renderProjects();
+  setTimeout(()=>s.focus(),40);
+  if(signedIn())loadDriveIntoProjects();
+}
+function closeProjectsPage(){const p=document.getElementById('projPage');if(p)p.remove()}
+let driveRows=null;                 // Drive files not present locally
+function loadDriveIntoProjects(){
+  driveList().then(files=>{
+    const lib=libLoad();
+    const localDriveIds=new Set(Object.keys(lib).map(k=>lib[k].driveId).filter(Boolean));
+    driveRows=files.filter(f=>!localDriveIds.has(f.id))
+      .map(f=>({driveOnly:true,id:f.id,name:f.name.replace(/\.tcc\.json$/,''),updated:Date.parse(f.modifiedTime)||0}));
+    renderProjects();
+  }).catch(()=>{});
+}
+function renderProjects(){
+  const body=document.getElementById('projBody');if(!body)return;
+  const lib=libLoad();
+  let rows=Object.keys(lib).map(id=>Object.assign({id},lib[id]));
+  if(driveRows)rows=rows.concat(driveRows);
+  const q=projFilter.trim().toLowerCase();
+  if(q)rows=rows.filter(r=>(r.name||'').toLowerCase().includes(q));
+  rows.sort((a,b)=>(b.updated||0)-(a.updated||0));
+  if(!rows.length){
+    body.innerHTML=`<div class="projempty">${q?'No projects match “'+esc(projFilter)+'”.'
+      :'No projects yet.<br>Start one and it will appear here automatically.'}</div>`;
+    return;
+  }
+  body.innerHTML='<div class="projgrid">'+rows.map(r=>{
+    const isCur=!r.driveOnly&&r.id===state.id;
+    const where=r.driveOnly?'<span class="tagd">Drive</span>'
+      :(r.driveId?'<span class="tagd">Drive</span><span class="tagl">This computer</span>'
+                 :'<span class="tagl">This computer</span>');
+    const meta=r.driveOnly?'':`${r.parcels||0} parcel${r.parcels===1?'':'s'} · ${r.boxes||0} instrument${r.boxes===1?'':'s'}`;
+    return `<div class="projcard${isCur?' cur':''}" data-id="${esc(r.id)}" data-drive="${r.driveOnly?'1':''}">
+      <div class="pc-top"><div class="pc-name">${esc(r.name||'Untitled Search')}</div>
+        ${isCur?'<span class="pc-cur">Open now</span>':''}</div>
+      <div class="pc-meta">${meta}</div>
+      <div class="pc-when">${esc(relTime(r.updated))}</div>
+      <div class="pc-tags">${where}</div>
+      <div class="pc-acts">
+        <button class="pc-btn" data-act="open">Open</button>
+        ${r.driveOnly?'':'<button class="pc-btn" data-act="rename">Rename</button>'}
+        <button class="pc-btn danger" data-act="del">Delete</button>
+      </div></div>`;
+  }).join('')+'</div>';
+  body.querySelectorAll('.projcard').forEach(card=>{
+    card.addEventListener('click',e=>{
+      const b=e.target.closest('[data-act]');
+      const id=card.dataset.id,isDrive=!!card.dataset.drive;
+      const act=b?b.dataset.act:'open';
+      if(act==='open'){isDrive?driveOpen(id,''):openLibProject(id)}
+      else if(act==='rename')renameLibProject(id);
+      else if(act==='del')isDrive?driveTrash(id,card.querySelector('.pc-name').textContent,()=>{driveRows=null;loadDriveIntoProjects()})
+                                 :deleteLibProject(id);
+    });
+  });
+}
+function openLibProject(id){
+  const lib=libLoad(),e=lib[id];if(!e)return;
+  if(id===state.id){closeProjectsPage();return}
+  libFlush();                                   // never lose what's open
+  let o;try{o=JSON.parse(e.data)}catch(_){toast('That project could not be read');return}
+  state=o;if(!state.id)state.id=id;
+  activeId=(state.parcels[0]||{}).id;selType=null;selId=null;
+  curFile=e.driveId?{id:e.driveId,name:(e.name||'Untitled')+'.tcc.json'}:{id:null,name:null};
+  cloudDirty=false;
+  closeProjectsPage();render();histReset();updateSaveState();
+  toast('Opened “'+(e.name||'Untitled')+'”');
+}
+function newLibProject(){
+  libFlush();
+  blankCanvas();state.id=uid();
+  closeProjectsPage();render();histReset();updateSaveState();toast('New project');
+  setTimeout(()=>{const f=document.getElementById('projName');if(f){f.focus();f.select()}},40);
+}
+function renameLibProject(id){
+  const lib=libLoad(),e=lib[id];if(!e)return;
+  const n=prompt('Project name:',e.name||'');
+  if(n==null)return;
+  const name=n.trim();if(!name)return;
+  e.name=name;e.updated=Date.now();
+  try{const s=JSON.parse(e.data);s.project=name;e.data=JSON.stringify(s)}catch(_){}
+  lib[id]=e;libWrite(lib);
+  if(id===state.id){state.project=name;document.getElementById('projName').value=name;save()}
+  renderProjects();toast('Renamed');
+}
+function deleteLibProject(id){
+  const lib=libLoad(),e=lib[id];if(!e)return;
+  const inDrive=e.driveId?'\n\nThe copy in Google Drive is NOT deleted.':'';
+  if(!confirm('Remove “'+(e.name||'Untitled')+'” from this computer?'+inDrive))return;
+  delete lib[id];libWrite(lib);
+  if(id===state.id){blankCanvas();state.id=uid();render();histReset();updateSaveState()}
+  renderProjects();toast('Removed');
 }
 
 /* ================= Box actions menu (⋯ on the box) ================= */
@@ -1100,6 +1301,7 @@ document.addEventListener('keydown',e=>{
     if(selType==='box')deleteBox(selId);else if(selType==='arrow')deleteArrow(selId);
   }
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='d'&&selType==='box'){e.preventDefault();duplicateBox(selId);return}
+  if(e.key==='Escape'&&document.getElementById('projPage')){closeProjectsPage();return}
   if(e.key==='Escape'){closeBoxMenu();if(drag&&drag.mode==='arrow'){drag=null;drawArrows()}clearSelection()}
 });
 
