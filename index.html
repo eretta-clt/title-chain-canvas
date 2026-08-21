@@ -441,9 +441,19 @@ function updatePill(){
 }
 function focusFirstIssue(){const is=parcelIssues();if(is.length){select('box',is[0].b.id);centerOnBox(is[0].b.id);}}
 function centerOnBox(id){
-  const b=boxById(id);const el=boxEl(id);if(!b)return;const v=view();const r=canvas.getBoundingClientRect();
-  const w=el?el.offsetWidth:222,h=el?el.offsetHeight:110;
-  v.panX=r.width/2-(b.x+w/2)*v.zoom;v.panY=r.height/2-(b.y+h/2)*v.zoom;applyView();save();
+  const b=boxById(id);if(!b)return;
+  const apply=()=>{
+    const el=boxEl(id),v=view(),r=canvas.getBoundingClientRect();
+    // fall back if the canvas has not been measured yet — a zero-size read would
+    // otherwise park the box off-screen, which is exactly what centring prevents
+    const cw=r.width||canvas.clientWidth||window.innerWidth;
+    const ch=r.height||canvas.clientHeight||window.innerHeight;
+    const w=el?el.offsetWidth:222,h=el?el.offsetHeight:110;
+    v.panX=cw/2-(b.x+w/2)*v.zoom;v.panY=ch/2-(b.y+h/2)*v.zoom;
+    applyView();save();
+  };
+  apply();
+  if(!canvas.getBoundingClientRect().width)requestAnimationFrame(apply);
 }
 
 /* ================= Persistence ================= */
@@ -825,6 +835,20 @@ function ancestorsOf(id,parcel){
   return [...seen];
 }
 function nextParcelName(){return 'Parcel '+(state.parcels.length+1)}
+// Name a spun-off parcel after the owner it starts with — the grantee of the deed
+// it was started from — rather than a bare "Parcel 3".
+function parcelNameFrom(b){
+  let base=((b&&(b.grantee||b.grantor))||'').trim().replace(/\s+/g,' ');
+  if(!base)return uniqueParcelName(nextParcelName());
+  if(base.length>30)base=base.slice(0,29).replace(/[\s,;&\-/]+$/,'')+'…';
+  return uniqueParcelName(base);
+}
+function uniqueParcelName(base){
+  const taken=new Set(state.parcels.map(p=>(p.name||'').toLowerCase()));
+  if(!taken.has(base.toLowerCase()))return base;
+  let i=2;while(taken.has((base+' ('+i+')').toLowerCase()))i++;
+  return base+' ('+i+')';
+}
 // One click: open a new parcel that already carries this instrument and everything
 // behind it, for a tract that splits off and shares the earlier history.
 function startNewChainFrom(id){copyToParcel(id,'chain','__new__')}
@@ -854,7 +878,7 @@ function copyToParcel(rootId,scope,destId){
   const ids=scope==='chain'?ancestorsOf(rootId,src):[rootId];
   let dest;
   if(destId==='__new__'){
-    dest=newParcel(nextParcelName());
+    dest=newParcel(parcelNameFrom(src.boxes.find(x=>x.id===rootId)));
     dest.color=PARCEL_COLORS[state.parcels.length%PARCEL_COLORS.length];
     state.parcels.push(dest);
   }else dest=state.parcels.find(p=>p.id===destId);
@@ -876,7 +900,12 @@ function copyToParcel(rootId,scope,destId){
   src.arrows.forEach(a=>{if(map[a.from]&&map[a.to]){dest.arrows.push({id:uid(),from:map[a.from],to:map[a.to]});links++}});
   const n=Object.keys(map).length;
   activeId=dest.id;selType=null;selId=null;
-  render();commit();
+  render();
+  // land on the copy you acted on, centred and selected, so it can't get lost
+  const landed=map[rootId];
+  if(landed){select('box',landed);centerOnBox(landed);}
+  else fitAll();
+  commit();
   toast(n+' box'+(n!==1?'es':'')+(links?' and '+links+' link'+(links!==1?'s':''):'')+' copied to '+dest.name);
 }
 function deleteBox(id){
