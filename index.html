@@ -1765,6 +1765,25 @@ let gTok=null,gTokExp=0,gUser=null,gTokenClient=null,gisReady=false,gisFailed=fa
 let curFile={id:null,name:null};
 let cloudDirty=false;
 
+/* Keep the signed-in session across reloads. Google's silent re-auth needs
+   third-party cookies, which browsers now block, so relying on it alone meant
+   signing in again on every refresh. Stored in sessionStorage, not localStorage:
+   it survives a reload but is gone when the tab closes, so a token can't sit
+   around on a shared workstation. Tokens expire in about an hour regardless. */
+const GSESS_KEY='titleCanvas.gsess';
+function sessionSave(){
+  try{sessionStorage.setItem(GSESS_KEY,JSON.stringify({tok:gTok,exp:gTokExp,user:gUser}))}catch(_){}
+}
+function sessionClear(){try{sessionStorage.removeItem(GSESS_KEY)}catch(_){}}
+function sessionRestore(){
+  try{
+    const raw=sessionStorage.getItem(GSESS_KEY);if(!raw)return false;
+    const o=JSON.parse(raw);
+    if(o&&o.tok&&o.exp&&Date.now()<o.exp){gTok=o.tok;gTokExp=o.exp;gUser=o.user||null;return true}
+    sessionClear();
+  }catch(_){}
+  return false;
+}
 function gcfgLoad(){try{const r=localStorage.getItem(GCFG_KEY);if(r)gcfg=Object.assign(gcfg,JSON.parse(r))}catch(_){}}
 function gcfgSave(){try{localStorage.setItem(GCFG_KEY,JSON.stringify(gcfg))}catch(_){}}
 function cloudAvailable(){return location.protocol==='http:'||location.protocol==='https:'}
@@ -1789,6 +1808,7 @@ function initTokenClient(){
         gTok=r.access_token;gTokExp=Date.now()+((+r.expires_in||3600)-120)*1000;
         fetchUser().then(()=>{
           if(gUser&&gUser.email)adoptContext(ctxFor(gUser.email));
+          if(gTok)sessionSave();
           renderAccount();updateSaveState();
           if(gPending){const f=gPending;gPending=null;f()}
         });
@@ -1830,7 +1850,7 @@ function signOut(force){
   }
   save();                                   // keep their work under their own key
   const t=gTok;
-  gTok=null;gTokExp=0;gUser=null;
+  gTok=null;gTokExp=0;gUser=null;sessionClear();
   try{if(t&&window.google&&google.accounts)google.accounts.oauth2.revoke(t,()=>{})}catch(_){}
   ctxKey='::guest';                          // clear the screen for the next person
   blankCanvas();
@@ -1847,7 +1867,7 @@ function fetchUser(){
       // which accounts may authorize the app at all.
       if(gUser&&gcfg.hd&&gUser.hd!==gcfg.hd&&!(gUser.email||'').endsWith('@'+gcfg.hd)){
         const bad=gUser.email||'that account';
-        gTok=null;gTokExp=0;gUser=null;
+        gTok=null;gTokExp=0;gUser=null;sessionClear();
         showModalPanel({title:'Wrong account',
           bodyHTML:`<p class="xnote">You signed in as <b>${esc(bad)}</b>, which isn't a <b>@${esc(gcfg.hd)}</b> account.<br><br>Please sign in with your work account.</p>`,
           buttons:[{label:'Try again',primary:true,onClick:()=>{closeModalPanel();signIn()}},{label:'Close',onClick:closeModalPanel}]});
@@ -1857,7 +1877,7 @@ function fetchUser(){
 function gfetch(url,opts){
   opts=opts||{};opts.headers=Object.assign({Authorization:'Bearer '+gTok},opts.headers||{});
   return fetch(url,opts).then(r=>{
-    if(r.status===401){gTok=null;gTokExp=0;renderAccount();throw new Error('Session expired — please sign in again')}
+    if(r.status===401){gTok=null;gTokExp=0;sessionClear();renderAccount();throw new Error('Session expired — please sign in again')}
     if(!r.ok)return r.text().then(t=>{throw new Error('Drive error '+r.status+(t?': '+t.slice(0,140):''))});
     return r;
   });
@@ -2117,13 +2137,17 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 /* ================= Boot ================= */
 gcfgLoad();
 migrateLegacyStore();
+// Pick the workspace up front so the signed-in user's own projects load straight
+// away, with no flash of the guest canvas and no keep-or-fresh prompt on reload.
+if(sessionRestore()&&gUser&&gUser.email)ctxKey=ctxFor(gUser.email);
 if(!load()){activeId=state.parcels[0].id}
 render();
 histReset();
 renderAccount();
 updateSaveState();
-// Restore a previous Drive session silently (no popup) if this browser has one.
-if(cloudAvailable()&&gcfg.clientId){
+// Only ask Google if we have no live token — this needs third-party cookies and
+// often cannot succeed, which is why the session above is stored.
+if(cloudAvailable()&&gcfg.clientId&&!signedIn()){
   loadGIS(err=>{if(!err){try{initTokenClient().requestAccessToken({prompt:''})}catch(_){}}});
 }
 </script>
