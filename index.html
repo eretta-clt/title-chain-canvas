@@ -655,6 +655,7 @@ function renderInspector(){
         :`<div class="istat none">Noted for reference. A ${esc(KINDS[b.kind].label.toLowerCase())} conveys no fee title, so this fraction is left out of the chain's interest check.</div>`}
       </div>`:''}
       <div class="fld"><label>Notes</label><textarea rows="2" oninput="upd('notes',this.value)">${esc(b.notes)}</textarea></div>
+      <div class="del-row"><button class="dup-btn" onclick="startNewChainFrom('${b.id}')">New chain from here</button></div>
       <div class="del-row"><button class="dup-btn" onclick="duplicateBox('${b.id}')">Duplicate box</button></div>
       <div class="del-row"><button class="dup-btn" onclick="openCopyToParcel('${b.id}')">Copy to parcel&hellip;</button></div>
       <div class="del-row"><button class="del-btn" onclick="deleteBox('${b.id}')">Delete box</button></div>`;
@@ -718,8 +719,9 @@ function openBoxMenu(id,r){
   closeBoxMenu();
   const m=document.createElement('div');
   m.className='bmenu-pop';m.id='bmenuPop';m.dataset.for=id;
-  m.innerHTML=`<button data-act="dup"><span class="mi">&#10697;</span>Duplicate</button>
-    <button data-act="cpp"><span class="mi">&#8631;</span>Copy to parcel&hellip;</button>
+  m.innerHTML=`<button data-act="new"><span class="mi">&#43;</span>New chain from here</button>
+    <button data-act="dup"><span class="mi">&#10697;</span>Duplicate</button>
+    <button data-act="cpp"><span class="mi">&rarr;</span>Copy to parcel&hellip;</button>
     <button data-act="del" class="danger"><span class="mi">&times;</span>Delete</button>`;
   document.body.appendChild(m);
   let x=r.right-m.offsetWidth, y=r.bottom+6;
@@ -731,7 +733,8 @@ function openBoxMenu(id,r){
   m.addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b)return;
     const act=b.dataset.act;closeBoxMenu();
-    if(act==='dup')duplicateBox(id);
+    if(act==='new')startNewChainFrom(id);
+    else if(act==='dup')duplicateBox(id);
     else if(act==='cpp')openCopyToParcel(id);
     else if(act==='del')deleteBox(id);
   });
@@ -822,6 +825,9 @@ function ancestorsOf(id,parcel){
   return [...seen];
 }
 function nextParcelName(){return 'Parcel '+(state.parcels.length+1)}
+// One click: open a new parcel that already carries this instrument and everything
+// behind it, for a tract that splits off and shares the earlier history.
+function startNewChainFrom(id){copyToParcel(id,'chain','__new__')}
 function openCopyToParcel(id){
   const src=activeParcel();
   const chain=ancestorsOf(id,src);
